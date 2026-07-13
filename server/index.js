@@ -2348,6 +2348,15 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         if (executionContext.localOnly && mcpConfig?.type === 'remote' && !isLoopbackUrl(mcpConfig.url)) throw new Error(`${d.label || nid} is blocked from remote MCP access by the effective local-only workflow policy`)
         let args = d.arguments && typeof d.arguments === 'object' ? d.arguments : {}
         if (upstream) { try { args = JSON.parse(upstream) } catch { args = { ...args, input: upstream } } }
+        if (!mcpConfig) throw new Error(`MCP server "${serverId}" is not configured`)
+        assertMcpExecutable(mcpConfig)
+        const allowedTool = assertMcpToolAllowed(mcpConfig, toolName, [executionContext.permissions, wf.permissions, node.permissions, node.data?.permissions])
+        const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
+        const requestHash = crypto.createHash('sha256').update(JSON.stringify({ serverId, tool: allowedTool, args })).digest('hex')
+        run.checkpoint = prepareEffect(run.checkpoint, nid, attemptId, { requestHash, reconciliation: { kind: 'mcp', serverId, tool: allowedTool } })
+        persistRun(runId, run)
+        run.checkpoint = markEffectInflight(run.checkpoint, nid, attemptId)
+        persistRun(runId, run)
         pushEvent(run, 'info', `▶ ${d.label || nid} — MCP ${d.server || '?'} / ${d.tool || '?'}`, nid)
         const controller = new AbortController(); run.controllers ||= new Set(); run.controllers.add(controller)
         const startedAt = Date.now()
@@ -2364,6 +2373,8 @@ app.post('/api/workflows/:id/run', async (req, res) => {
           persistRun(runId, run)
         }
         outputs[nid] = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+        run.checkpoint = confirmEffect(run.checkpoint, nid, attemptId, { receiptRef: `mcp:${serverId}:${allowedTool}`, output: outputs[nid], outputHash: crypto.createHash('sha256').update(outputs[nid]).digest('hex') })
+        persistRun(runId, run)
         pushEvent(run, 'done', `✔ ${d.label || nid}: MCP tool completed`, nid)
         return
       }
