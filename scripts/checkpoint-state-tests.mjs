@@ -11,6 +11,7 @@ import {
   migrateLegacyCheckpoint,
   prepareEffect,
   recoverCheckpoint,
+  resetCheckpointNodes,
   validateCheckpoint,
 } from '../server/runtime/checkpoint-state.js'
 
@@ -42,6 +43,10 @@ check(computational.nodes.b.state === 'pending', 'crashed computation without an
 computational = claimNode(computational, 'b', { inputHash: 'input-b', attemptId: 'attempt-b2' })
 check(computational.nodes.b.attemptsStarted === 2 && computational.nodes.b.execKey === createCheckpoint(identity).nodes.b.execKey, 'retry changes attempt identity without changing logical execution identity')
 
+let unknownEffect = claimNode(createCheckpoint(identity), 'a', { inputHash: 'input-a', attemptId: 'attempt-a1' })
+unknownEffect = recoverCheckpoint(unknownEffect, { runtimeEpoch: 'epoch-2', unsafeNodeIds: ['a'] })
+check(unknownEffect.nodes.a.state === 'needs_review' && unknownEffect.nodes.a.effect.state === 'ambiguous', 'legacy in-flight side-effecting work fails closed when dispatch evidence is unavailable')
+
 let failed = claimNode(createCheckpoint(identity), 'a', { inputHash: 'input-a', attemptId: 'attempt-a1' })
 failed = failNode(failed, 'a', 'attempt-a1', 'error:fixture')
 check(failed.nodes.a.state === 'failed' && failed.nodes.a.lastErrorRef === 'error:fixture', 'ordinary failure is recorded without ambiguity')
@@ -49,6 +54,9 @@ check(failed.nodes.a.state === 'failed' && failed.nodes.a.lastErrorRef === 'erro
 const legacy = migrateLegacyCheckpoint({ outputs: { in: 'value', b: '' }, routes: {}, skipped: ['a'], lastNodeId: 'out' }, identity)
 check(legacy.nodes.in.state === 'succeeded' && legacy.nodes.a.state === 'skipped' && legacy.nodes.b.state === 'succeeded', 'legacy migration trusts exact output and skip evidence')
 check(legacy.nodes.out.state === 'pending' && legacy.legacyLastNodeId === 'out', 'legacy lastNodeId is not mistaken for completion evidence')
+
+const reset = resetCheckpointNodes(confirmed, ['a'])
+check(reset.nodes.a.state === 'pending' && !Object.hasOwn(reset.outputs, 'a') && !reset.nodes.a.effect, 'explicit retry resets only selected logical executions')
 
 assert.throws(() => completeNode(checkpoint, 'a', 'stale-attempt', { output: 'unsafe' }), /stale or inactive attempt/)
 passed += 1; console.log('✓ stale worker completion is fenced')

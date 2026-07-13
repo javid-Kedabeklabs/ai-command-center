@@ -4,12 +4,12 @@ Status: READY
 
 Portfolio order: `docs/PORTFOLIO_PRIORITY_PLAN.md`.
 
-Implement per-node durable recovery and exactly-once-or-stop side-effect reconciliation.
+Implement precise exactly-once-or-stop side-effect reconciliation on top of checkpoint schema v2.
 
 Immediate work:
-- Define a versioned per-node checkpoint/attempt state machine with explicit ambiguous side-effect recovery.
-- Characterize the legacy topological-prefix behavior and add a pure transition/recovery reducer before changing the live route.
-- Add crash-boundary tests for parallel branches before replacing the legacy topological-prefix recovery model.
-- Route effectful node classes through stable logical operation keys and prepared/inflight/confirmed/ambiguous phases.
+- Route HTTP and file-write nodes through stable logical operation keys and prepared/inflight/confirmed/ambiguous phases.
+- Add authoritative file hash receipts and HTTP idempotency/reconciliation contracts before broadening automatic recovery.
+- Extend the same adapter contract to MCP, subworkflows, triggers, and model/tool boundaries.
+- Preserve the current conservative rule: an unsafe node killed without authoritative dispatch evidence stops in `needs_review`.
 
-Definition of done: a versioned snapshot records actual per-node state and fenced attempts; completed parallel nodes are neither skipped nor repeated across every modeled crash boundary; confirmed effects finalize without reissue; ambiguous effects durably stop in `needs_review`; existing historical run records remain readable; regressions stay green.
+Definition of done: every effect is proven absent, deduplicated by a stable operation key, confirmed by an authoritative receipt, or durably stopped in `needs_review`; no ambiguous effect is blindly retried; deterministic crash tests and existing regressions stay green.

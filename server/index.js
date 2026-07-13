@@ -15,6 +15,7 @@ import { listWorkflowVersions, resolvePinnedWorkflowVersion, saveWorkflowVersion
 import { archiveReusableComponent, renameReusableComponent, reusableComponentCatalog } from './workflows/components.js'
 import { exportComponentManifest, installComponentManifest, validateComponentManifest } from './workflows/component-manifests.js'
 import { runDependencyGraph } from './runtime/scheduler.js'
+import { claimNode, completeNode, createCheckpoint, failNode, migrateLegacyCheckpoint, recoverCheckpoint, resetCheckpointNodes, validateCheckpoint } from './runtime/checkpoint-state.js'
 import { ResourceCoordinator, nodeResourceLimit, normalizeResourcePolicy, resourcePolicyErrors } from './runtime/resources.js'
 import { GlobalModelCoordinator, explicitModelBytes, globalModelPolicyFromEnv } from './runtime/global-model-resources.js'
 import { childExecutionContext, effectiveExecutionContext, executionContextFromEvidence, executionPolicyEvidence, MAX_SUBWORKFLOW_DEPTH, parseInheritedExecutionContext, WORKFLOW_CAPABILITIES } from './runtime/subworkflow-context.js'
@@ -1851,10 +1852,12 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   const policyEvidence = executionPolicyEvidence(executionContext)
   const profile = req.body.profileId ? loadProfiles().find(p => p.id === req.body.profileId) : null
   const runId = new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomBytes(3).toString('hex')
+  const logicalRunId = resumeSource?.logicalRunId || resumeSource?.checkpoint?.logicalRunId || resumeSource?.id || runId
+  const runtimeEpoch = crypto.randomUUID()
   const cwd = path.join(PIPE_WS, runId)
   fs.mkdirSync(cwd, { recursive: true })
   if (resumeSource?.dir && fs.existsSync(resumeSource.dir)) fs.cpSync(resumeSource.dir, cwd, { recursive: true, force: false })
-  const run = { id: runId, type: 'workflow', workflowId: wf.id, workflowVersion: requestedVersion || null, candidateId: candidate?.id || null, environment: candidate?.environment || wf.environment || 'development', ...operationalEvidence, workflowName: wf.name, task: input, status: 'running', dir: cwd, events: [], listeners: new Set(), approvals: {}, childRunIds: [], executionPolicy: policyEvidence, modelAbortController: new AbortController(), started: Date.now(), resumedFrom: resumeSource?.id || null, resumeFromNode: resumeFromNode || null, ...(triggerContext ? { triggerContext } : {}) }
+  const run = { id: runId, logicalRunId, runtimeEpoch, type: 'workflow', workflowId: wf.id, workflowVersion: requestedVersion || null, candidateId: candidate?.id || null, environment: candidate?.environment || wf.environment || 'development', ...operationalEvidence, workflowName: wf.name, task: input, status: 'running', dir: cwd, events: [], listeners: new Set(), approvals: {}, childRunIds: [], executionPolicy: policyEvidence, modelAbortController: new AbortController(), started: Date.now(), resumedFrom: resumeSource?.id || null, resumeFromNode: resumeFromNode || null, ...(triggerContext ? { triggerContext } : {}) }
   runs.set(runId, run)
   persistRun(runId, run) // persist at start so it survives restarts (durability)
   res.json({ runId })
@@ -1868,8 +1871,6 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   const nodeById = Object.fromEntries(wf.nodes.map(n => [n.id, n]))
   const incoming = {} // nodeId -> edges
   for (const e of wf.edges) (incoming[e.target] = incoming[e.target] || []).push(e)
-  const resumeIndex = resumeFromNode ? order.indexOf(resumeFromNode) : 0
-  const preservedIds = new Set(resumeSource ? order.slice(0, Math.max(0, resumeIndex)) : [])
   const requestedNodeId = String(req.body.nodeId || resumeFromNode || '')
   const runMode = ['selected', 'from', 'branch'].includes(req.body.runMode) ? req.body.runMode : resumeSource ? 'from' : 'full'
   const parents = Object.fromEntries(wf.nodes.map(node => [node.id, []])), children = Object.fromEntries(wf.nodes.map(node => [node.id, []]))
@@ -1886,10 +1887,41 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   const disabledNodes = disabledWorkflowNodeIds(wf.groups, wf.nodes)
   for (const nodeId of disabledNodes) allowedNodes.delete(nodeId)
   if (disabledNodes.size) pushEvent(run, 'info', `⊘ Skipping ${disabledNodes.size} step${disabledNodes.size === 1 ? '' : 's'} in disabled workflow sections`)
-  const outputs = Object.fromEntries(Object.entries(resumeSource?.checkpoint?.outputs || {}).filter(([id]) => preservedIds.has(id))) // nodeId -> text
-  const routes = Object.fromEntries(Object.entries(resumeSource?.checkpoint?.routes || {}).filter(([id]) => preservedIds.has(id))) // decision node id -> true/false
-  const skipped = new Set((resumeSource?.checkpoint?.skipped || []).filter(id => preservedIds.has(id)))
-  run.checkpoint = { workflowVersion: requestedVersion || null, outputs, routes, skipped: [], lastNodeId: null, activeLeases: [], executionPolicy: policyEvidence, subworkflows: [], updatedAt: Date.now() }
+  const checkpointIdentity = { logicalRunId, workflowVersion: requestedVersion, workflowVersionHash: workflowContentHash(wf), nodeIds: wf.nodes.map(node => node.id), runtimeEpoch, executionPolicy: policyEvidence }
+  const unsafeRecoveryNodeIds = wf.nodes.filter(node => {
+    if (node.type === 'http') return !['GET', 'HEAD', 'OPTIONS'].includes(String(node.data?.method || 'GET').toUpperCase())
+    return ['obsidian-write', 'python', 'shell', 'write-file', 'mcp', 'subworkflow', 'agent', 'orchestrator', 'custom'].includes(node.type)
+  }).map(node => node.id)
+  try {
+    if (resumeSource?.checkpoint?.schemaVersion === 2) {
+      validateCheckpoint(resumeSource.checkpoint)
+      if (resumeSource.checkpoint.workflowVersion !== requestedVersion || resumeSource.checkpoint.workflowVersionHash !== checkpointIdentity.workflowVersionHash) throw new Error('resume checkpoint identity does not match the pinned workflow definition')
+      run.checkpoint = recoverCheckpoint(resumeSource.checkpoint, { runtimeEpoch, unsafeNodeIds: unsafeRecoveryNodeIds })
+    } else if (resumeSource?.checkpoint) {
+      run.checkpoint = migrateLegacyCheckpoint(resumeSource.checkpoint, checkpointIdentity)
+    } else {
+      run.checkpoint = createCheckpoint(checkpointIdentity)
+    }
+  } catch (error) {
+    run.status = 'failed'; run.ended = Date.now(); run.checkpointError = error.message
+    pushEvent(run, 'error', `✘ Checkpoint rejected: ${error.message}`)
+    persistRun(runId, run)
+    return
+  }
+  if (resumeSource && resumeFromNode) {
+    const resetIds = runMode === 'selected' ? [resumeFromNode] : [...closure(resumeFromNode, children)]
+    run.checkpoint = resetCheckpointNodes(run.checkpoint, resetIds)
+  }
+  const reviewNodes = Object.values(run.checkpoint.nodes).filter(node => node.state === 'needs_review').map(node => node.nodeId)
+  if (reviewNodes.length) {
+    run.status = 'needs_review'; run.needsReviewNodes = reviewNodes; run.ended = Date.now()
+    pushEvent(run, 'error', `⚠ Recovery stopped for review: uncertain external effect at ${reviewNodes.join(', ')}`)
+    persistRun(runId, run)
+    return
+  }
+  const outputs = run.checkpoint.outputs // nodeId -> text
+  const routes = run.checkpoint.routes // decision node id -> true/false
+  const skipped = new Set(run.checkpoint.skipped)
   const resourcePolicy = executionContext.resources
   let resourceCoordinator
   const persistResourceState = () => {
@@ -1965,7 +1997,7 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   try {
     const executeNode = async nid => {
       if (!allowedNodes.has(nid)) return
-      if (resumeSource && order.indexOf(nid) < Math.max(0, resumeIndex)) { pushEvent(run, 'info', `↳ ${nodeById[nid]?.data?.label || nid} restored from checkpoint`, nid); return }
+      if (['succeeded', 'skipped'].includes(run.checkpoint.nodes[nid]?.state)) { pushEvent(run, 'info', `↳ ${nodeById[nid]?.data?.label || nid} restored from checkpoint`, nid); return }
       activeNodeId = nid
       await waitIfPaused()
       if (wf.settings?.maxDuration && Date.now() - run.started > Number(wf.settings.maxDuration)) throw new Error(`workflow exceeded its ${Math.round(Number(wf.settings.maxDuration) / 60000)} minute duration limit`)
@@ -1997,11 +2029,9 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       })
       if (incomingEdges.length && !activeEdges.length) {
         skipped.add(nid); outputs[nid] = ''
-        run.checkpoint.skipped = [...skipped]; run.checkpoint.lastNodeId = nid; run.checkpoint.updatedAt = Date.now()
         pushEvent(run, 'info', `○ ${d.label || nid} skipped — route not active`, nid)
         return
       }
-      run.checkpoint.lastNodeId = nid; run.checkpoint.updatedAt = Date.now()
       const transferred = activeEdges.map(e => {
         const raw = outputs[e.source] ?? ''
         const mapping = e.data?.mapping
@@ -2399,7 +2429,26 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       }
       outputs[nid] = await modelStep({ run, nodeId: nid, label: d.label || nid, model, instruction, cwd }, d)
     }
-    await runDependencyGraph(wf.nodes, wf.edges, { parallelism: safe ? 1 : wf.settings?.parallelism || 4, execute: async nid => { try { await executeNode(nid) } catch (error) { error.nodeId ||= nid; throw error } }, cancelled: () => run.cancelled, onLayer: layer => { if (layer.length > 1) pushEvent(run, 'info', `⑂ Running ${layer.length} independent workflow branches with bounded concurrency`) } })
+    const executeCheckpointedNode = async nid => {
+      if (!allowedNodes.has(nid) || ['succeeded', 'skipped'].includes(run.checkpoint.nodes[nid]?.state)) return executeNode(nid)
+      const predecessorEvidence = (incoming[nid] || []).map(edge => [edge.source, run.checkpoint.nodes[edge.source]?.outputHash || null])
+      const inputHash = crypto.createHash('sha256').update(JSON.stringify({ workflowHash: run.checkpoint.workflowVersionHash, node: nodeById[nid], input, predecessorEvidence, permissionHash: run.permissionHash })).digest('hex')
+      run.checkpoint = claimNode(run.checkpoint, nid, { inputHash })
+      const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
+      persistRun(runId, run)
+      try {
+        await executeNode(nid)
+        if (run.cancelled) return
+        run.checkpoint = completeNode(run.checkpoint, nid, attemptId, { output: outputs[nid] ?? '', skipped: skipped.has(nid) })
+        persistRun(runId, run)
+      } catch (error) {
+        run.checkpoint = failNode(run.checkpoint, nid, attemptId, `error:${crypto.createHash('sha256').update(String(error?.message || error)).digest('hex').slice(0, 16)}`)
+        persistRun(runId, run)
+        error.nodeId ||= nid
+        throw error
+      }
+    }
+    await runDependencyGraph(wf.nodes, wf.edges, { parallelism: safe ? 1 : wf.settings?.parallelism || 4, execute: executeCheckpointedNode, cancelled: () => run.cancelled, onLayer: layer => { if (layer.length > 1) pushEvent(run, 'info', `⑂ Running ${layer.length} independent workflow branches with bounded concurrency`) } })
     if (run.cancelled && run.status !== 'cancelled') { run.status = 'cancelled'; run.ended = Date.now(); pushEvent(run, 'info', '⏹ Cancelled by user') }
     if (run.status !== 'cancelled') {
       run.status = 'done'; run.ended = Date.now()
@@ -2409,9 +2458,10 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       pushEvent(run, 'done', '✔ Workflow complete')
     }
   } catch (e) {
-    run.status = run.cancelled ? 'cancelled' : 'failed'; run.ended = Date.now()
+    const checkpointState = run.checkpoint?.nodes?.[e?.nodeId || activeNodeId]?.state
+    run.status = run.cancelled ? 'cancelled' : checkpointState === 'needs_review' ? 'needs_review' : 'failed'; run.ended = Date.now()
     run.failedNodeId = e?.nodeId || activeNodeId
-    pushEvent(run, run.cancelled ? 'info' : 'error', run.cancelled ? '⏹ Cancelled by user' : '✘ Workflow error: ' + (e?.message || e))
+    pushEvent(run, run.cancelled ? 'info' : 'error', run.cancelled ? '⏹ Cancelled by user' : checkpointState === 'needs_review' ? '⚠ Workflow stopped for review after an uncertain external effect' : '✘ Workflow error: ' + (e?.message || e))
   }
   persistRun(runId, run)
   for (const l of run.listeners) { try { l.end() } catch {} }
@@ -2792,7 +2842,8 @@ const httpServer = app.listen(PORT, '127.0.0.1', () => {
       const workflow = previous?.workflowId ? readJson(path.join(WF_DIR, `${previous.workflowId}.json`), null) : null
       if (!previous || !workflow || workflow.settings?.restartRecovery === false || previous.recoveredBy) continue
       try {
-        const response = await fetch(`http://127.0.0.1:${PORT}/api/workflows/${previous.workflowId}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resumeRunId: previous.id, fromNodeId: previous.failedNodeId || previous.checkpoint?.lastNodeId, runMode: 'from', input: previous.task }) })
+        const legacyFromNodeId = previous.checkpoint?.schemaVersion === 2 ? undefined : previous.failedNodeId || previous.checkpoint?.lastNodeId
+        const response = await fetch(`http://127.0.0.1:${PORT}/api/workflows/${previous.workflowId}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resumeRunId: previous.id, ...(legacyFromNodeId ? { fromNodeId: legacyFromNodeId, runMode: 'from' } : {}), input: previous.task }) })
         const recovered = await response.json()
         if (response.ok && recovered.runId) { previous.recoveredBy = recovered.runId; previous.recoveryStartedAt = Date.now(); atomicWriteJsonSync(previousFile, previous); appendAudit('workflow_restart_recovery', { previousRunId: previous.id, recoveredBy: recovered.runId, workflowId: previous.workflowId }) }
       } catch (error) { appendAudit('workflow_restart_recovery_failed', { previousRunId: previous.id, error: error.message }) }

@@ -163,19 +163,41 @@ export function completeNode(snapshot, nodeId, attemptId, { output, outputHash, 
   })
 }
 
-export function failNode(snapshot, nodeId, attemptId, errorRef = null) {
+export function failNode(snapshot, nodeId, attemptId, errorRef = null, { ambiguous = false } = {}) {
   return next(snapshot, copy => {
     const node = assertNode(copy, nodeId)
     requireCurrentAttempt(node, attemptId)
-    node.state = node.effect?.state === 'inflight' ? 'needs_review' : 'failed'
-    if (node.state === 'needs_review') node.effect.state = 'ambiguous'
+    node.state = ambiguous || node.effect?.state === 'inflight' ? 'needs_review' : 'failed'
+    if (node.state === 'needs_review') {
+      node.effect ||= { operationKey: effectOperationKey(node.execKey), requestHash: node.inputHash || 'unknown', state: 'ambiguous' }
+      node.effect.state = 'ambiguous'
+    }
     node.lastErrorRef = errorRef
     delete node.activeAttempt
   })
 }
 
-export function recoverCheckpoint(snapshot, { runtimeEpoch = crypto.randomUUID(), reconcile = {} } = {}) {
+export function resetCheckpointNodes(snapshot, nodeIds) {
+  const selected = new Set((nodeIds || []).map(String))
+  return next(snapshot, copy => {
+    for (const nodeId of selected) {
+      const node = assertNode(copy, nodeId)
+      node.state = 'pending'
+      node.inputHash = null
+      delete node.activeAttempt
+      delete node.effect
+      delete node.outputHash
+      delete node.lastErrorRef
+      delete copy.outputs[nodeId]
+      delete copy.routes[nodeId]
+      copy.skipped = copy.skipped.filter(id => id !== nodeId)
+    }
+  })
+}
+
+export function recoverCheckpoint(snapshot, { runtimeEpoch = crypto.randomUUID(), reconcile = {}, unsafeNodeIds = [] } = {}) {
   validateCheckpoint(snapshot)
+  const unsafe = new Set(unsafeNodeIds.map(String))
   return next(snapshot, copy => {
     copy.runtimeEpoch = runtimeEpoch
     for (const node of Object.values(copy.nodes)) {
@@ -186,6 +208,9 @@ export function recoverCheckpoint(snapshot, { runtimeEpoch = crypto.randomUUID()
       } else if (node.effect?.state === 'inflight') {
         node.state = decision === 'absent' ? 'pending' : decision === 'confirmed' ? 'succeeded' : 'needs_review'
         if (node.state === 'needs_review') node.effect.state = 'ambiguous'
+      } else if (unsafe.has(node.nodeId)) {
+        node.state = 'needs_review'
+        node.effect ||= { operationKey: effectOperationKey(node.execKey), requestHash: node.inputHash || 'legacy-unknown', state: 'ambiguous' }
       } else {
         node.state = 'pending'
       }
