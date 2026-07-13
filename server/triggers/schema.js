@@ -86,7 +86,7 @@ export function normalizeError(error) {
 
 export function normalizeEvidence(value = {}) {
   if (!plain(value)) throw new Error('delivery evidence must be an object')
-  const allowed = ['runStatus', 'duplicate', 'manual', 'recovered', 'reason', 'error', 'intendedAt', 'policyResult', 'scheduleHash', 'event', 'relativePathHash', 'previousRelativePathHash', 'fingerprintHash']
+  const allowed = ['runStatus', 'duplicate', 'manual', 'recovered', 'recoveredFrom', 'reason', 'error', 'intendedAt', 'policyResult', 'scheduleHash', 'event', 'relativePathHash', 'previousRelativePathHash', 'fingerprintHash']
   const evidence = {}
   for (const key of allowed) {
     if (!(key in value)) continue

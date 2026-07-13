@@ -51,10 +51,19 @@ export function createTriggerService({ app, triggersFile, historyFile, rootDir, 
 
   async function watchRun(delivery) {
     if (!delivery.runId || runWatchers.has(delivery.id) || stopping) return
+    let currentRunId = delivery.runId, interruptedPolls = 0
     const inspect = async () => {
       if (stopping) return
-      const run = await getRun(delivery.runId)
+      const run = await getRun(currentRunId)
       if (!run || ['running', 'paused'].includes(run.status)) return
+      if (run.recoveredBy) {
+        const recoveredFrom = currentRunId
+        currentRunId = run.recoveredBy
+        interruptedPolls = 0
+        delivery = await store.transition(delivery.id, delivery.state, { runId: currentRunId, evidence: { recoveredFrom } })
+        return
+      }
+      if (run.status === 'interrupted' && interruptedPolls++ < 20) return
       clearInterval(runWatchers.get(delivery.id)); runWatchers.delete(delivery.id)
       await store.transition(delivery.id, delivery.state, { evidence: { runStatus: run.status } }).catch(() => {})
       const trigger = find(delivery.triggerId)
@@ -232,6 +241,8 @@ export function createTriggerService({ app, triggersFile, historyFile, rootDir, 
         if (trigger.type === 'folder') await enqueueFolderLaunch(trigger, delivery, trigger.config?.input ?? delivery.evidence, true).catch(() => {})
         else await launch(trigger, delivery, trigger.config?.input, true).catch(() => {})
       }
+      const history = await store.list({ limit: 200 })
+      for (const delivery of history.items.filter(item => item.state === 'started' && item.runId)) watchRun(delivery).catch(() => {})
     })()
     await reconciliation
   }

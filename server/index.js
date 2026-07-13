@@ -20,6 +20,7 @@ import { createRunControl, decideApproval, pendingApprovalForNode, requestApprov
 import { ResourceCoordinator, nodeResourceLimit, normalizeResourcePolicy, resourcePolicyErrors } from './runtime/resources.js'
 import { GlobalModelCoordinator, explicitModelBytes, globalModelPolicyFromEnv } from './runtime/global-model-resources.js'
 import { childExecutionContext, effectiveExecutionContext, executionContextFromEvidence, executionPolicyEvidence, MAX_SUBWORKFLOW_DEPTH, parseInheritedExecutionContext, WORKFLOW_CAPABILITIES } from './runtime/subworkflow-context.js'
+import { findSubworkflowRun, normalizeParentOperation } from './runtime/subworkflow-receipts.js'
 import { createTriggerService } from './triggers/service.js'
 import { findTriggerRun, normalizeTriggerContext } from './triggers/run-idempotency.js'
 import { createWorkflowTriggerAdapter } from './triggers/workflow-adapter.js'
@@ -1803,6 +1804,7 @@ async function runStep({ run, nodeId, label, model, instruction, cwd, subprocess
 app.post('/api/workflows/:id/run', async (req, res) => {
   if (!/^[a-z0-9_-]+$/i.test(req.params.id)) return res.status(400).json({ error: 'invalid workflow id' })
   let triggerContext = null
+  let parentOperation = null
   if (req.body.triggerContext != null) {
     const supplied = Buffer.from(String(req.get('x-command-center-trigger-secret') || ''))
     const expected = Buffer.from(TRIGGER_INTERNAL_SECRET)
@@ -1810,8 +1812,24 @@ app.post('/api/workflows/:id/run', async (req, res) => {
     try { triggerContext = normalizeTriggerContext(req.body.triggerContext) } catch (error) { return res.status(400).json({ error: error.message }) }
     if (triggerContext.workflowId !== req.params.id) return res.status(409).json({ error: 'trigger delivery workflow identity does not match this route' })
   }
+  if (req.body.parentOperation != null) {
+    const supplied = Buffer.from(String(req.get('x-command-center-trigger-secret') || ''))
+    const expected = Buffer.from(TRIGGER_INTERNAL_SECRET)
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return res.status(403).json({ error: 'parent operation context is server-owned' })
+    try { parentOperation = normalizeParentOperation(req.body.parentOperation) } catch (error) { return res.status(400).json({ error: error.message }) }
+  }
   const resumeSource = req.body.resumeRunId && /^[a-z0-9_.-]+$/i.test(req.body.resumeRunId) ? readJson(path.join(RUNS_DIR, `${req.body.resumeRunId}.json`), null) : null
   if (req.body.resumeRunId && (!resumeSource || resumeSource.workflowId !== req.params.id)) return res.status(400).json({ error: 'resume checkpoint does not belong to this workflow' })
+  let effectiveTriggerContext = triggerContext
+  if (!effectiveTriggerContext && resumeSource?.triggerContext) {
+    try { effectiveTriggerContext = normalizeTriggerContext(resumeSource.triggerContext) }
+    catch (error) { return res.status(409).json({ error: `resume trigger context is invalid: ${error.message}` }) }
+  }
+  let resumedParentOperation = null
+  if (resumeSource?.parentOperation) {
+    try { resumedParentOperation = normalizeParentOperation(resumeSource.parentOperation) }
+    catch (error) { return res.status(409).json({ error: `resume parent operation is invalid: ${error.message}` }) }
+  }
   const requestedCandidateId = String(req.body.candidateId || resumeSource?.candidateId || '').trim()
   const candidate = requestedCandidateId ? governanceCandidates.find(requestedCandidateId) : null
   if (requestedCandidateId && (!candidate || candidate.workflowId !== req.params.id)) return res.status(409).json({ error: 'run requires a valid exact candidate for this workflow', code: 'INVALID_RUN_CANDIDATE' })
@@ -1849,6 +1867,12 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       return res.json({ runId: existing.id, duplicate: true })
     }
   }
+  if (parentOperation) {
+    let existing
+    try { existing = findSubworkflowRun({ activeRuns: runs.values(), runsDir: RUNS_DIR, operation: parentOperation, workflowId: wf.id, workflowVersion: requestedVersion || null }) }
+    catch (error) { return res.status(409).json({ error: error.message }) }
+    if (existing) return res.json({ runId: existing.id, duplicate: true })
+  }
   let order
   try { order = topoOrder(wf.nodes, wf.edges) } catch (e) { return res.status(400).json({ error: e.message }) }
   const inheritedContext = req.body.executionContext
@@ -1857,6 +1881,7 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       ? executionContextFromEvidence(resumeSource.executionPolicy)
       : parseInheritedExecutionContext(null, req.body.subworkflowStack)
   const subworkflowStack = inheritedContext.stack
+  if (parentOperation && (inheritedContext.parentRunId !== parentOperation.parentRunId || inheritedContext.parentNodeId !== parentOperation.parentNodeId)) return res.status(409).json({ error: 'parent operation does not match inherited execution context' })
   if (subworkflowStack.length > MAX_SUBWORKFLOW_DEPTH) return res.status(400).json({ error: `subworkflow depth limit ${MAX_SUBWORKFLOW_DEPTH} exceeded before starting ${wf.id}` })
   if (subworkflowStack.includes(wf.id)) return res.status(400).json({ error: `recursive subworkflow reference detected: ${[...subworkflowStack, wf.id].join(' → ')}` })
   const input = String(req.body.input ?? resumeSource?.task ?? '').trim()
@@ -1877,7 +1902,8 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   const cwd = path.join(PIPE_WS, runId)
   fs.mkdirSync(cwd, { recursive: true })
   if (resumeSource?.dir && fs.existsSync(resumeSource.dir)) fs.cpSync(resumeSource.dir, cwd, { recursive: true, force: false })
-  const run = { id: runId, logicalRunId, runtimeEpoch, type: 'workflow', workflowId: wf.id, workflowVersion: requestedVersion || null, candidateId: candidate?.id || null, environment: candidate?.environment || wf.environment || 'development', ...operationalEvidence, workflowName: wf.name, task: input, status: 'running', paused: runControl.manualPause.paused, control: runControl, approvalComments: { ...(resumeSource?.approvalComments || {}) }, dir: cwd, events: [], listeners: new Set(), childRunIds: [], executionPolicy: policyEvidence, modelAbortController: new AbortController(), started: Date.now(), resumedFrom: resumeSource?.id || null, resumeFromNode: resumeFromNode || null, ...(triggerContext ? { triggerContext } : {}) }
+  const effectiveParentOperation = parentOperation || resumedParentOperation
+  const run = { id: runId, logicalRunId, runtimeEpoch, type: 'workflow', workflowId: wf.id, workflowVersion: requestedVersion || null, candidateId: candidate?.id || null, environment: candidate?.environment || wf.environment || 'development', ...operationalEvidence, workflowName: wf.name, task: input, status: 'running', paused: runControl.manualPause.paused, control: runControl, approvalComments: { ...(resumeSource?.approvalComments || {}) }, dir: cwd, events: [], listeners: new Set(), childRunIds: [], executionPolicy: policyEvidence, modelAbortController: new AbortController(), started: Date.now(), resumedFrom: resumeSource?.id || null, resumeFromNode: resumeFromNode || null, ...(effectiveTriggerContext ? { triggerContext: effectiveTriggerContext } : {}), ...(effectiveParentOperation ? { parentOperation: effectiveParentOperation } : {}) }
   runs.set(runId, run)
   persistRun(runId, run) // persist at start so it survives restarts (durability)
   res.json({ runId })
@@ -1907,7 +1933,8 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   const disabledNodes = disabledWorkflowNodeIds(wf.groups, wf.nodes)
   for (const nodeId of disabledNodes) allowedNodes.delete(nodeId)
   if (disabledNodes.size) pushEvent(run, 'info', `⊘ Skipping ${disabledNodes.size} step${disabledNodes.size === 1 ? '' : 's'} in disabled workflow sections`)
-  const checkpointIdentity = { logicalRunId, workflowVersion: requestedVersion, workflowVersionHash: workflowContentHash(wf), nodeIds: wf.nodes.map(node => node.id), runtimeEpoch, executionPolicy: policyEvidence }
+  const triggerReceipt = effectiveTriggerContext ? { receiptRef: `trigger:${effectiveTriggerContext.deliveryId}`, deliveryId: effectiveTriggerContext.deliveryId, deliveryKey: effectiveTriggerContext.deliveryKey, triggerId: effectiveTriggerContext.triggerId, workflowId: effectiveTriggerContext.workflowId, workflowVersion: effectiveTriggerContext.workflowVersion, source: effectiveTriggerContext.source } : null
+  const checkpointIdentity = { logicalRunId, workflowVersion: requestedVersion, workflowVersionHash: workflowContentHash(wf), nodeIds: wf.nodes.map(node => node.id), runtimeEpoch, executionPolicy: policyEvidence, triggerReceipt }
   const unsafeRecoveryNodeIds = wf.nodes.filter(node => {
     if (node.type === 'http') return !['GET', 'HEAD', 'OPTIONS'].includes(String(node.data?.method || 'GET').toUpperCase())
     return ['obsidian-write', 'python', 'shell', 'write-file', 'mcp', 'subworkflow', 'agent', 'orchestrator', 'custom'].includes(node.type)
@@ -1919,6 +1946,10 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       const reconcile = {}
       for (const node of Object.values(resumeSource.checkpoint.nodes)) {
         const evidence = node.effect?.reconciliation
+        if (node.state === 'running' && node.effect?.state === 'inflight' && evidence?.kind === 'subworkflow') {
+          reconcile[node.nodeId] = 'absent'
+          continue
+        }
         if (node.state !== 'running' || node.effect?.state !== 'inflight' || evidence?.kind !== 'file-write') continue
         try {
           const target = resolvePathBeneath(cwd, evidence.relativePath, { allowMissing: true })
@@ -1935,6 +1966,12 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       run.checkpoint = migrateLegacyCheckpoint(resumeSource.checkpoint, checkpointIdentity)
     } else {
       run.checkpoint = createCheckpoint(checkpointIdentity)
+    }
+    if (triggerReceipt) {
+      const existingReceipt = run.checkpoint.triggerReceipt
+      if (existingReceipt && (existingReceipt.deliveryId !== triggerReceipt.deliveryId || existingReceipt.deliveryKey !== triggerReceipt.deliveryKey || existingReceipt.triggerId !== triggerReceipt.triggerId || existingReceipt.workflowVersion !== triggerReceipt.workflowVersion)) throw new Error('resume checkpoint trigger receipt conflicts with the persisted delivery identity')
+      run.checkpoint.triggerReceipt = triggerReceipt
+      validateCheckpoint(run.checkpoint)
     }
   } catch (error) {
     run.status = 'failed'; run.ended = Date.now(); run.checkpointError = error.message
@@ -2429,20 +2466,52 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         if (childVersion && !/^[a-z0-9_.-]+$/i.test(childVersion)) throw new Error(`${d.label || nid} has an invalid pinned workflow version`)
         const childContext = childExecutionContext({ parent: executionContext, workflowId: wf.id, parentRunId: run.id, parentNode: node })
         if (childContext.stack.includes(childId)) throw new Error(`recursive subworkflow reference detected at ${wf.id}/${nid}: ${[...childContext.stack, childId].join(' → ')}`)
+        if (childVersion) resolvePinnedWorkflowVersion(WF_VERSION_DIR, childId, childVersion)
         const childPolicyEvidence = executionPolicyEvidence(childContext)
+        const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
+        const requestHash = crypto.createHash('sha256').update(JSON.stringify({ childId, childVersion: childVersion || null, input: upstream || input, executionPolicy: childPolicyEvidence })).digest('hex')
+        run.checkpoint = prepareEffect(run.checkpoint, nid, attemptId, { requestHash, reconciliation: { kind: 'subworkflow', workflowId: childId, workflowVersion: childVersion || null } })
+        persistRun(runId, run)
+        const operationKey = run.checkpoint.nodes[nid].effect.operationKey
+        const parentOperationContext = { operationKey, parentRunId: run.id, parentLogicalRunId: run.logicalRunId, parentWorkflowId: wf.id, parentNodeId: nid, parentWorkflowVersionHash: run.checkpoint.workflowVersionHash }
         pushEvent(run, 'info', `▶ ${d.label || nid} — starting subworkflow ${childId}${childVersion ? ` at pinned version ${childVersion}` : ' at its current unpinned draft'}`, nid)
-        const response = await fetch(`http://127.0.0.1:${PORT}/api/workflows/${childId}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: upstream || input, profileId: req.body.profileId, safe, executionContext: childContext, ...(childVersion ? { workflowVersion: childVersion } : {}) }) })
-        const started = await response.json(); if (!response.ok) throw new Error(started.error || `subworkflow ${childId} could not start`)
+        run.checkpoint = markEffectInflight(run.checkpoint, nid, attemptId)
+        persistRun(runId, run)
+        const response = await fetch(`http://127.0.0.1:${PORT}/api/workflows/${childId}/run`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-command-center-trigger-secret': TRIGGER_INTERNAL_SECRET }, body: JSON.stringify({ input: upstream || input, profileId: req.body.profileId, safe, executionContext: childContext, parentOperation: parentOperationContext, ...(childVersion ? { workflowVersion: childVersion } : {}) }) })
+        const started = await response.json()
+        if (!response.ok) {
+          pushEvent(run, 'error', `✘ ${d.label || nid}: ${started.error || `subworkflow ${childId} could not start`}`, nid)
+          throw new Error(started.error || `subworkflow ${childId} could not start`)
+        }
+        if (process.env.ACC_TEST_CRASH_AFTER_EFFECT === `${wf.id}:${nid}:subworkflow-start`) process.kill(process.pid, 'SIGKILL')
         run.childRunIds.push(started.runId)
-        run.checkpoint.subworkflows.push({ nodeId: nid, workflowId: childId, workflowVersion: childVersion || null, runId: started.runId, executionPolicy: childPolicyEvidence, startedAt: Date.now() })
+        if (!run.checkpoint.subworkflows.some(item => item.operationKey === operationKey)) run.checkpoint.subworkflows.push({ nodeId: nid, operationKey, workflowId: childId, workflowVersion: childVersion || null, runId: started.runId, executionPolicy: childPolicyEvidence, startedAt: Date.now() })
         persistRun(runId, run)
         if (run.paused) pauseActiveRun(runs.get(started.runId), true)
-        let child
-        while (true) { await waitIfPaused(); if (run.cancelled) { cancelActiveRun(runs.get(started.runId), 'parent workflow stopped'); break }; child = runs.get(started.runId) || readJson(path.join(RUNS_DIR, `${started.runId}.json`), null); if (child && !['running', 'paused'].includes(child.status)) break; await new Promise(resolve => setTimeout(resolve, 300)) }
-        if (!child || child.status !== 'done') throw new Error(`subworkflow ${childId} ${child?.status || 'did not finish'}`)
-        outputs[nid] = child.result || ''
-        const childRecord = run.checkpoint.subworkflows.find(item => item.runId === started.runId)
+        let child, activeChildRunId = started.runId, interruptedPolls = 0
+        while (true) {
+          await waitIfPaused()
+          if (run.cancelled) { cancelActiveRun(runs.get(activeChildRunId), 'parent workflow stopped'); break }
+          child = runs.get(activeChildRunId) || readJson(path.join(RUNS_DIR, `${activeChildRunId}.json`), null)
+          if (child?.recoveredBy) {
+            const recoveredFrom = activeChildRunId
+            activeChildRunId = child.recoveredBy
+            const record = run.checkpoint.subworkflows.find(item => item.operationKey === operationKey)
+            if (record) { record.recoveredFrom = recoveredFrom; record.runId = activeChildRunId }
+            if (!run.childRunIds.includes(activeChildRunId)) run.childRunIds.push(activeChildRunId)
+            persistRun(runId, run)
+            continue
+          }
+          if (child?.status === 'interrupted' && interruptedPolls++ < 20) { await new Promise(resolve => setTimeout(resolve, 300)); continue }
+          if (child && !['running', 'paused'].includes(child.status)) break
+          await new Promise(resolve => setTimeout(resolve, 300))
+        }
+        outputs[nid] = child?.result || ''
+        const childRecord = run.checkpoint.subworkflows.find(item => item.operationKey === operationKey)
         if (childRecord) childRecord.completedAt = Date.now()
+        run.checkpoint = confirmEffect(run.checkpoint, nid, attemptId, { receiptRef: `subworkflow:${activeChildRunId}`, output: outputs[nid], outputHash: crypto.createHash('sha256').update(outputs[nid]).digest('hex') })
+        persistRun(runId, run)
+        if (!child || child.status !== 'done') throw new Error(`subworkflow ${childId} ${child?.status || 'did not finish'}`)
         pushEvent(run, 'done', `✔ ${d.label || nid}: subworkflow complete`, nid)
         return
       }

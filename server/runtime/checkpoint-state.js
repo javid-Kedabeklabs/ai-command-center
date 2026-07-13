@@ -48,7 +48,7 @@ export function effectOperationKey(execKey) {
   return `op-${digest(execKey).slice(0, 32)}`
 }
 
-export function createCheckpoint({ logicalRunId, workflowVersion, workflowVersionHash, nodeIds, runtimeEpoch = crypto.randomUUID(), executionPolicy = null }) {
+export function createCheckpoint({ logicalRunId, workflowVersion, workflowVersionHash, nodeIds, runtimeEpoch = crypto.randomUUID(), executionPolicy = null, triggerReceipt = null }) {
   if (!logicalRunId || !workflowVersion || !workflowVersionHash) throw new Error('checkpoint identity is incomplete')
   const uniqueNodeIds = [...new Set((nodeIds || []).map(String))]
   if (!uniqueNodeIds.length || uniqueNodeIds.some(id => !id)) throw new Error('checkpoint requires non-empty node identifiers')
@@ -69,6 +69,7 @@ export function createCheckpoint({ logicalRunId, workflowVersion, workflowVersio
     skipped: [],
     activeLeases: [],
     executionPolicy,
+    ...(triggerReceipt ? { triggerReceipt: clone(triggerReceipt) } : {}),
     subworkflows: [],
     updatedAt: Date.now(),
   }
@@ -83,6 +84,7 @@ export function migrateLegacyCheckpoint(legacy, identity) {
   snapshot.routes = clone(legacy.routes || {})
   snapshot.skipped = [...new Set((legacy.skipped || []).map(String))]
   snapshot.activeLeases = clone(legacy.activeLeases || [])
+  if (legacy.triggerReceipt || identity.triggerReceipt) snapshot.triggerReceipt = clone(legacy.triggerReceipt || identity.triggerReceipt)
   snapshot.subworkflows = clone(legacy.subworkflows || [])
   for (const [nodeId, node] of Object.entries(snapshot.nodes)) {
     if (Object.hasOwn(snapshot.outputs, nodeId)) node.state = 'succeeded'
@@ -262,6 +264,10 @@ export function validateCheckpoint(snapshot) {
   if (!Number.isInteger(snapshot.revision) || snapshot.revision < 0) throw new Error('checkpoint revision must be a non-negative integer')
   if (!snapshot.logicalRunId || !snapshot.workflowVersion || !snapshot.workflowVersionHash || !snapshot.runtimeEpoch) throw new Error('checkpoint identity is incomplete')
   assertRecord(snapshot.nodes, 'checkpoint nodes')
+  if (snapshot.triggerReceipt) {
+    assertRecord(snapshot.triggerReceipt, 'checkpoint trigger receipt')
+    if (!/^[a-z0-9_.-]+$/i.test(String(snapshot.triggerReceipt.deliveryId || '')) || !/^[a-f0-9]{64}$/.test(String(snapshot.triggerReceipt.deliveryKey || '')) || !/^trigger-[a-z0-9_-]{6,80}$/i.test(String(snapshot.triggerReceipt.triggerId || '')) || !/^[a-z0-9_.-]+$/i.test(String(snapshot.triggerReceipt.workflowVersion || ''))) throw new Error('checkpoint trigger receipt is incomplete')
+  }
   for (const [nodeId, node] of Object.entries(snapshot.nodes)) {
     assertRecord(node, `checkpoint node ${nodeId}`)
     if (node.nodeId !== nodeId || !node.execKey) throw new Error(`checkpoint node ${nodeId} identity is invalid`)

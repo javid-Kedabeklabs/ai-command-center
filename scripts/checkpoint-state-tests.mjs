@@ -23,6 +23,10 @@ const identity = { logicalRunId: 'run-logical-1', workflowVersion: 'version-1', 
 
 let checkpoint = createCheckpoint(identity)
 check(checkpoint.schemaVersion === 2 && Object.keys(checkpoint.nodes).length === 4, 'creates a versioned per-node checkpoint')
+const triggerReceipt = { receiptRef: 'trigger:delivery-1', deliveryId: 'delivery-1', deliveryKey: 'a'.repeat(64), triggerId: 'trigger-fixture1', workflowId: 'workflow-a', workflowVersion: 'version-a', source: 'manual' }
+const triggeredCheckpoint = createCheckpoint({ ...identity, triggerReceipt })
+check(JSON.stringify(triggeredCheckpoint.triggerReceipt) === JSON.stringify(triggerReceipt), 'links a trigger delivery receipt to the authoritative checkpoint')
+assert.throws(() => validateCheckpoint({ ...triggeredCheckpoint, triggerReceipt: { deliveryId: 'delivery-1' } }), /trigger receipt is incomplete/)
 check(logicalExecutionKey({ logicalRunId: identity.logicalRunId, workflowVersionHash: identity.workflowVersionHash, nodeId: 'a' }) === checkpoint.nodes.a.execKey, 'logical execution key is deterministic')
 check(effectOperationKey(checkpoint.nodes.a.execKey) === effectOperationKey(checkpoint.nodes.a.execKey), 'operation key is stable across physical attempts')
 
