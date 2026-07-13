@@ -2,6 +2,8 @@
 
 Status: READY
 
+Portfolio order: `docs/PORTFOLIO_PRIORITY_PLAN.md`.
+
 Implement per-node durable recovery and exactly-once-or-stop side-effect reconciliation.
 
 Immediate work:

@@ -5,6 +5,8 @@ Updated: 2026-07-13
 Repository: `/Users/kedabektechlabs/command-center`
 Runtime: `http://localhost:1717`
 
+Dependency-aware delivery order, parallel preparation, deferred enhancements, estimates, and independent-review prompt are maintained in `docs/PORTFOLIO_PRIORITY_PLAN.md`.
+
 ## 1. Executive assessment
 
 AI Command Center is a working local-first orchestration prototype with an unusually complete Studio shell and a meaningful runtime vertical slice. Its strongest assets are the shared multi-mode graph, AI proposal workflow, Python isolation, observable execution, local model integration, approvals, artifacts, and version history. Its critical weaknesses are the monolithic runner, incomplete canonical schemas, limited permission enforcement, JSON stores without transactional event semantics, incomplete graph-level parallelism/recovery, and an executable catalog substantially narrower than the product vision.
