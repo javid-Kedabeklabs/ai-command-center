@@ -1,0 +1,3 @@
+{"type":"system","session_id":"session-fixture","model":"fable"}
+{"type":"assistant","message":"implemented bounded change"}
+{"type":"result","structured_output":{"status":"COMPLETED","summary":"Added the isolated component.","commitSha":"0123456789abcdef0123456789abcdef01234567","filesChanged":["web/src/components/Pilot.jsx"],"tests":[{"command":"node scripts/pilot-tests.mjs","status":"PASSED","details":"3 passed"}],"risks":[],"assumptions":["Existing component contract remains stable."],"recommendedAction":"INTEGRATE"}}
