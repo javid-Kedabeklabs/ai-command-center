@@ -31,6 +31,8 @@
 - Added a live-backend browser acceptance journey that saves a typed workflow, creates its immutable run version, reaches durable approval, submits a revision/subject-bound decision, completes, and verifies safe evidence in Run Center without route mocks.
 - Corrected Workflow Studio's durable approval state handling from the nonexistent `requested` display value to the authoritative `pending` state, restoring approval controls and waiting-node truthfulness.
 - Existing request guarding, deny-wins permissions, symlink-safe filesystem boundaries, immutable versions, typed ports, Keychain references, and trigger-store durability remain in force.
+- Committed the product journey at `8d231e0` and published sanitized public review snapshot `a6232e9` on `review/current-20260713`; unauthenticated `git ls-remote` confirms it is public.
+- Reloaded the committed implementation through host request `host-5c3fe066d0712a55`; its HTTP 200 health postcondition and receipt SHA-256 `1cd8aa0b89c7ea1c76bfbbd2c4d67bcafe2c126805b08faf1eb6356e2e682be8` passed.
 
 ## Verification
 
