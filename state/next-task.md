@@ -2,13 +2,13 @@
 
 Status: READY
 
-Commit and publish the verified additive lifecycle checkpoint, then start the local request-boundary and evidence-redaction slice.
+Commit, publish, and host-verify the local request-boundary and evidence-redaction slice, then implement deny-wins permission ceilings and symlink-safe filesystem access.
 
 Immediate work:
-- Review and stage only lifecycle product, test, and documentation files; exclude runtime/user data.
-- Run staged secret scanning and verify the exact commit diff.
-- Commit one lifecycle checkpoint and publish a sanitized public review branch with its exact SHA.
-- Reload the host service once and rerun the focused live lifecycle/security/smoke gates against the integrated commit.
-- Then implement Host/Origin/Fetch-Metadata enforcement and centralized release-visible redaction with deterministic hostile-request and secret-canary tests.
+- Review and stage only request-guard/redaction product, tests, and documentation; exclude runtime/user data.
+- Run the 30-repeat browser gate, staged secret scan, and exact diff review.
+- Commit one security checkpoint, refresh the squashed sanitized public review branch, then reload and verify the host once.
+- Define environment -> workflow -> node -> agent/plugin/subworkflow deny-wins capability composition.
+- Replace lexical filesystem containment in core run/artifact adapters with symlink-aware resolution and deterministic escape tests.
 
-Definition of done: the public review branch points at the verified current infrastructure; no runtime/private files are published; the host runs the committed lifecycle code; request-boundary/redaction tests fail before implementation and pass afterward; all existing focused regressions remain green.
+Definition of done: hostile browser/local requests fail before routing; legitimate UI/CLI/internal trigger traffic remains green; exact resolved secret canaries are absent from persisted and release-visible evidence; public and host checkpoints match the committed source; permission escalation and symlink escape tests fail before the next implementation and pass afterward.

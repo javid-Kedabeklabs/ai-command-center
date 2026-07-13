@@ -35,6 +35,8 @@ import { assertOrdinaryWorkflowSave, assertWorkflowDelete, assertWorkflowImport,
 import { createCandidateRecord, createCandidateStore, workflowOperationalEvidence } from './governance/candidates.js'
 import { assertExactEvaluationEvidence, createEvaluationRecord, normalizeEvaluationSuite } from './governance/evaluations.js'
 import { applyLifecycleTransition, createLifecycleStore, migrateGovernanceLifecycle } from './governance/lifecycle.js'
+import { createLocalRequestGuard, requireMutationIntent } from './security/local-request-guard.js'
+import { createRedactor } from './security/redaction.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -66,7 +68,14 @@ const LMSTUDIO = 'http://localhost:1234'
 const PORT = Number(process.env.PORT) || 1717
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:${path.join(HOME, '.lmstudio', 'bin')}:${process.env.PATH || ''}` }
 const KEYCHAIN_ACCOUNT = 'ai-command-center'
-const secretReferenceRegistry = createSecretReferenceRegistry({ file: SECRET_REFERENCES_FILE, keychain: createMacKeychainSecretStore({ account: KEYCHAIN_ACCOUNT }) })
+const redactionSecretValues = new Set()
+const { redact: redactReleaseValue } = createRedactor({ secretValues: redactionSecretValues })
+const rawSecretReferenceRegistry = createSecretReferenceRegistry({ file: SECRET_REFERENCES_FILE, keychain: createMacKeychainSecretStore({ account: KEYCHAIN_ACCOUNT }) })
+const secretReferenceRegistry = {
+  ...rawSecretReferenceRegistry,
+  put(input) { const saved = rawSecretReferenceRegistry.put(input); redactionSecretValues.add(String(input.value)); return saved },
+  resolve(id) { const value = rawSecretReferenceRegistry.resolve(id); redactionSecretValues.add(value); return value },
+}
 const modelMetadata = new Map()
 const globalModelCoordinator = new GlobalModelCoordinator(globalModelPolicyFromEnv(), {
   onWait: (request, snapshot) => updateGlobalRunResources(request, snapshot, 'waiting'),
@@ -75,15 +84,18 @@ const globalModelCoordinator = new GlobalModelCoordinator(globalModelPolicyFromE
   onCancel: (request, snapshot) => updateGlobalRunResources(request, snapshot, 'cancelled'),
 })
 const providerSecretName = provider => `ai-command-center-provider-${provider}`
-function readProviderSecret(provider) { try { return execFileSync('/usr/bin/security', ['find-generic-password', '-a', KEYCHAIN_ACCOUNT, '-s', providerSecretName(provider), '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' } }
-function storeProviderSecret(provider, value) { execFileSync('/usr/bin/security', ['add-generic-password', '-U', '-a', KEYCHAIN_ACCOUNT, '-s', providerSecretName(provider), '-w', String(value)], { stdio: 'ignore' }); if (readProviderSecret(provider) !== String(value)) throw new Error('Keychain verification failed') }
+function readProviderSecret(provider) { try { const value = execFileSync('/usr/bin/security', ['find-generic-password', '-a', KEYCHAIN_ACCOUNT, '-s', providerSecretName(provider), '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); if (value) redactionSecretValues.add(value); return value } catch { return '' } }
+function storeProviderSecret(provider, value) { execFileSync('/usr/bin/security', ['add-generic-password', '-U', '-a', KEYCHAIN_ACCOUNT, '-s', providerSecretName(provider), '-w', String(value)], { stdio: 'ignore' }); redactionSecretValues.add(String(value)); if (readProviderSecret(provider) !== String(value)) throw new Error('Keychain verification failed') }
 function deleteProviderSecret(provider) { try { execFileSync('/usr/bin/security', ['delete-generic-password', '-a', KEYCHAIN_ACCOUNT, '-s', providerSecretName(provider)], { stdio: 'ignore' }) } catch {} }
 function providerExecutionEnv() {
   return minimalProviderEnvironment(ENV, { openai: readProviderSecret('openai'), anthropic: readProviderSecret('anthropic') })
 }
 
 const app = express()
+const additionalOrigins = String(process.env.ACC_ALLOWED_LOCAL_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)
+app.use(createLocalRequestGuard({ port: PORT, allowedOrigins: additionalOrigins }))
 app.use(express.json({ limit: '10mb' }))
+app.use((_req, res, next) => { const sendJson = res.json.bind(res); res.json = value => sendJson(redactReleaseValue(value)); next() })
 
 function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return fallback } }
 function writeJson(file, value) { atomicWriteJsonSync(file, value) }
@@ -156,7 +168,8 @@ Your name is ${agent.name}. Your shared brain is ~/AgentBrain/ — follow 00-Rul
 // ---- audit log ----
 const AUDIT_LOG = path.join(DATA, 'audit.log')
 function appendAudit(action, detail) {
-  try { fs.appendFileSync(AUDIT_LOG, JSON.stringify({ t: Date.now(), action, detail }) + '\n') } catch {}
+  try { fs.appendFileSync(AUDIT_LOG, JSON.stringify(redactReleaseValue({ t: Date.now(), action, detail })) + '\n') }
+  catch { process.stderr.write('[audit] durable audit write failed\n') }
 }
 function removeOcAgent(id) {
   try { fs.unlinkSync(path.join(OC_AGENT_DIR, 'cc-' + id + '.md')) } catch {}
@@ -343,7 +356,7 @@ function terminateProcess(proc, signal = 'SIGTERM') {
 }
 
 function pushEvent(run, type, text, nodeId) {
-  const ev = { t: Date.now(), type, text }
+  const ev = redactReleaseValue({ t: Date.now(), type, text })
   if (nodeId) ev.nodeId = nodeId
   run.events.push(ev)
   for (const l of run.listeners) { try { l.write(`data: ${JSON.stringify(ev)}\n\n`) } catch {} }
@@ -379,7 +392,7 @@ function modelRequestSignal(req, res) {
 }
 function persistRun(runId, run) {
   const { listeners, proc, procs, controllers, resourceCoordinator, modelAbortController, ...rest } = run
-  atomicWriteJsonSync(path.join(RUNS_DIR, runId + '.json'), { id: runId, ...rest })
+  atomicWriteJsonSync(path.join(RUNS_DIR, runId + '.json'), redactReleaseValue({ id: runId, ...rest }))
 }
 
 function cancelActiveRun(run, reason = 'run stopped', seen = new Set()) {
@@ -539,7 +552,7 @@ app.get('/api/runs/:id/artifact', (req, res) => {
   if (!rec.dir) return res.status(404).end()
   const abs = path.resolve(rec.dir, req.query.name || '')
   if (!abs.startsWith(path.resolve(rec.dir) + path.sep)) return res.status(400).end()
-  try { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); res.send(fs.readFileSync(abs, 'utf8')) } catch { res.status(404).end() }
+  try { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); res.send(redactReleaseValue(fs.readFileSync(abs, 'utf8'))) } catch { res.status(404).end() }
 })
 
 function runSummary(id, r) {
@@ -586,7 +599,7 @@ app.get('/api/artifacts', (_req, res) => {
 })
 
 // ---------- governance: emergency stop, audit, permission info ----------
-app.post('/api/killall', (_req, res) => {
+app.post('/api/killall', requireMutationIntent('emergency-stop'), (_req, res) => {
   let killed = 0
   for (const [, r] of runs) if (r.status === 'running' || r.paused) { r.cancelled = true; r.paused = false; r.resourceCoordinator?.cancelAll('emergency stop'); try { r.modelAbortController?.abort(new Error('emergency stop')) } catch {}; terminateProcess(r.proc, 'SIGKILL'); for (const proc of r.procs || []) terminateProcess(proc, 'SIGKILL'); for (const controller of r.controllers || []) { try { controller.abort() } catch {} } if (r.type === 'agent') { r.status = 'cancelled'; r.ended = Date.now() } killed++ }
   try { execFile('pkill', ['-9', '-f', 'opencode run'], () => {}) } catch {}
@@ -2608,7 +2621,7 @@ app.get('/api/bundle/export', (_req, res) => {
   }
   res.setHeader('Content-Disposition', 'attachment; filename="command-center-bundle.json"')
   res.setHeader('Content-Type', 'application/json')
-  res.send(JSON.stringify(bundle, null, 2))
+  res.send(JSON.stringify(redactReleaseValue(bundle), null, 2))
 })
 
 function bundleSummary(bundle) { return { agents: Array.isArray(bundle.agents) ? bundle.agents.length : 0, workflows: Array.isArray(bundle.workflows) ? bundle.workflows.length : 0, profiles: Array.isArray(bundle.profiles) ? bundle.profiles.length : 0, brainFiles: bundle.brain && typeof bundle.brain === 'object' ? Object.keys(bundle.brain).length : 0 } }
