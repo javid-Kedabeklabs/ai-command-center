@@ -12,7 +12,9 @@ import {
   prepareEffect,
   recoverCheckpoint,
   resetCheckpointNodes,
+  resumeWaitingNode,
   validateCheckpoint,
+  waitNode,
 } from '../server/runtime/checkpoint-state.js'
 
 let passed = 0
@@ -48,6 +50,14 @@ confirmedBeforeCommit = markEffectInflight(confirmedBeforeCommit, 'a', 'attempt-
 confirmedBeforeCommit = confirmEffect(confirmedBeforeCommit, 'a', 'attempt-a1', { receiptRef: 'receipt:a', output: 'recovered-a' })
 confirmedBeforeCommit = recoverCheckpoint(confirmedBeforeCommit, { runtimeEpoch: 'epoch-2', unsafeNodeIds: ['a'] })
 check(confirmedBeforeCommit.nodes.a.state === 'succeeded' && confirmedBeforeCommit.outputs.a === 'recovered-a', 'confirmed effect finalizes after restart without reissue')
+
+let waiting = claimNode(createCheckpoint(identity), 'a', { inputHash: 'input-a', attemptId: 'attempt-a1' })
+waiting = waitNode(waiting, 'a', 'attempt-a1', { kind: 'approval', ref: 'approval-1' })
+waiting = resumeWaitingNode(waiting, 'a', 'attempt-a1', 'approval-1')
+check(waiting.nodes.a.state === 'running' && !waiting.nodes.a.wait, 'durable wait resumes only through its exact active attempt and reference')
+let recoveredWait = waitNode(claimNode(createCheckpoint(identity), 'a', { inputHash: 'input-a', attemptId: 'attempt-a1' }), 'a', 'attempt-a1', { kind: 'approval', ref: 'approval-1' })
+recoveredWait = recoverCheckpoint(recoveredWait, { runtimeEpoch: 'epoch-2' })
+check(recoveredWait.nodes.a.state === 'pending' && !recoveredWait.nodes.a.activeAttempt, 'restart reconstructs a durable wait with a newly fenced attempt')
 
 let computational = claimNode(createCheckpoint(identity), 'b', { inputHash: 'input-b', attemptId: 'attempt-b1' })
 computational = recoverCheckpoint(computational, { runtimeEpoch: 'epoch-2' })

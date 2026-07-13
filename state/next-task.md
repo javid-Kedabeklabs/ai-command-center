@@ -4,12 +4,12 @@ Status: READY
 
 Portfolio order: `docs/PORTFOLIO_PRIORITY_PLAN.md`.
 
-Implement precise exactly-once-or-stop side-effect reconciliation on top of checkpoint schema v2.
+Complete the hermetic release journey and remaining effect adapters on top of durable checkpoint/control state.
 
 Immediate work:
-- Extend the implemented HTTP/file-write effect phases to MCP, subworkflows, triggers, and model/tool boundaries.
-- Add trusted MCP tool classifications and authoritative reconciliation receipts rather than trusting descriptive annotations.
-- Add provider-specific HTTP reconciliation only where an audited idempotency or status contract exists.
-- Preserve the current conservative rule: an unsafe node killed without authoritative dispatch evidence stops in `needs_review`.
+- Add stable parent-operation dispatch and authoritative child-run receipts for subworkflows.
+- Link existing trigger delivery idempotency receipts into workflow checkpoint/evidence state.
+- Extend the multi-crash journey through trigger delivery and redacted evidence export.
+- Update browser state to render durable approval/manual-pause records instead of inferring authority only from event text.
 
-Definition of done: every effect is proven absent, deduplicated by a stable operation key, confirmed by an authoritative receipt, or durably stopped in `needs_review`; no ambiguous effect is blindly retried; deterministic crash tests and existing regressions stay green.
+Definition of done: the browser/API journey proves immutable build/save, parallel recovery, exactly-once-or-stop effects, durable approval, explicit pause, persisted trigger delivery, restart, completion, and redacted linked evidence with deterministic crash points and green regressions.

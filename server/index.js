@@ -15,7 +15,8 @@ import { listWorkflowVersions, resolvePinnedWorkflowVersion, saveWorkflowVersion
 import { archiveReusableComponent, renameReusableComponent, reusableComponentCatalog } from './workflows/components.js'
 import { exportComponentManifest, installComponentManifest, validateComponentManifest } from './workflows/component-manifests.js'
 import { runDependencyGraph } from './runtime/scheduler.js'
-import { claimNode, completeNode, confirmEffect, createCheckpoint, failNode, markEffectInflight, migrateLegacyCheckpoint, prepareEffect, recoverCheckpoint, resetCheckpointNodes, validateCheckpoint } from './runtime/checkpoint-state.js'
+import { claimNode, completeNode, confirmEffect, createCheckpoint, failNode, markEffectInflight, migrateLegacyCheckpoint, prepareEffect, recoverCheckpoint, resetCheckpointNodes, resumeWaitingNode, validateCheckpoint, waitNode } from './runtime/checkpoint-state.js'
+import { createRunControl, decideApproval, pendingApprovalForNode, requestApproval, setManualPause } from './runtime/run-control.js'
 import { ResourceCoordinator, nodeResourceLimit, normalizeResourcePolicy, resourcePolicyErrors } from './runtime/resources.js'
 import { GlobalModelCoordinator, explicitModelBytes, globalModelPolicyFromEnv } from './runtime/global-model-resources.js'
 import { childExecutionContext, effectiveExecutionContext, executionContextFromEvidence, executionPolicyEvidence, MAX_SUBWORKFLOW_DEPTH, parseInheritedExecutionContext, WORKFLOW_CAPABILITIES } from './runtime/subworkflow-context.js'
@@ -531,13 +532,29 @@ app.post('/api/runs/:id/stop', (req, res) => {
 })
 app.post('/api/runs/:id/pause', (req, res) => {
   const run = runs.get(req.params.id)
-  if (run && run.status === 'running' && run.type === 'workflow') { pauseActiveRun(run, true); pushEvent(run, 'info', '⏸ Paused — will hold before the next step') }
-  res.json({ ok: true, paused: !!run?.paused })
+  if (!run || run.status !== 'running' || run.type !== 'workflow') return res.status(404).json({ error: 'active workflow run not found' })
+  try {
+    const commandId = String(req.body?.commandId || `pause-${run.id}-${run.control?.manualPause?.generation || 0}`)
+    const changed = setManualPause(run.control || createRunControl(), { paused: true, commandId, expectedGeneration: req.body?.expectedGeneration })
+    run.control = changed.control
+    pauseActiveRun(run, true)
+    pushEvent(run, 'info', '⏸ Paused — will hold before the next step')
+    persistRun(run.id, run)
+    res.json({ ok: true, paused: true, receipt: changed.receipt, replay: changed.replay })
+  } catch (error) { res.status(error.code === 'STALE_PAUSE_GENERATION' ? 412 : 409).json({ error: error.message, code: error.code || 'PAUSE_FAILED' }) }
 })
 app.post('/api/runs/:id/resume', (req, res) => {
   const run = runs.get(req.params.id)
-  if (run && run.paused) { pauseActiveRun(run, false); pushEvent(run, 'info', '▶ Resumed') }
-  res.json({ ok: true })
+  if (!run || run.status !== 'running' || run.type !== 'workflow') return res.status(404).json({ error: 'active workflow run not found' })
+  try {
+    const commandId = String(req.body?.commandId || `resume-${run.id}-${run.control?.manualPause?.generation || 0}`)
+    const changed = setManualPause(run.control || createRunControl(), { paused: false, commandId, expectedGeneration: req.body?.expectedGeneration })
+    run.control = changed.control
+    pauseActiveRun(run, false)
+    pushEvent(run, 'info', '▶ Resumed')
+    persistRun(run.id, run)
+    res.json({ ok: true, paused: false, receipt: changed.receipt, replay: changed.replay })
+  } catch (error) { res.status(error.code === 'STALE_PAUSE_GENERATION' ? 412 : 409).json({ error: error.message, code: error.code || 'RESUME_FAILED' }) }
 })
 // full detail of one run (transcript + result + artifacts)
 app.get('/api/runs/:id/detail', (req, res) => {
@@ -1854,10 +1871,13 @@ app.post('/api/workflows/:id/run', async (req, res) => {
   const runId = new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomBytes(3).toString('hex')
   const logicalRunId = resumeSource?.logicalRunId || resumeSource?.checkpoint?.logicalRunId || resumeSource?.id || runId
   const runtimeEpoch = crypto.randomUUID()
+  let runControl
+  try { runControl = createRunControl(resumeSource?.control || null) }
+  catch (error) { return res.status(409).json({ error: `resume control state is invalid: ${error.message}`, code: 'INVALID_RUN_CONTROL' }) }
   const cwd = path.join(PIPE_WS, runId)
   fs.mkdirSync(cwd, { recursive: true })
   if (resumeSource?.dir && fs.existsSync(resumeSource.dir)) fs.cpSync(resumeSource.dir, cwd, { recursive: true, force: false })
-  const run = { id: runId, logicalRunId, runtimeEpoch, type: 'workflow', workflowId: wf.id, workflowVersion: requestedVersion || null, candidateId: candidate?.id || null, environment: candidate?.environment || wf.environment || 'development', ...operationalEvidence, workflowName: wf.name, task: input, status: 'running', dir: cwd, events: [], listeners: new Set(), approvals: {}, childRunIds: [], executionPolicy: policyEvidence, modelAbortController: new AbortController(), started: Date.now(), resumedFrom: resumeSource?.id || null, resumeFromNode: resumeFromNode || null, ...(triggerContext ? { triggerContext } : {}) }
+  const run = { id: runId, logicalRunId, runtimeEpoch, type: 'workflow', workflowId: wf.id, workflowVersion: requestedVersion || null, candidateId: candidate?.id || null, environment: candidate?.environment || wf.environment || 'development', ...operationalEvidence, workflowName: wf.name, task: input, status: 'running', paused: runControl.manualPause.paused, control: runControl, approvalComments: { ...(resumeSource?.approvalComments || {}) }, dir: cwd, events: [], listeners: new Set(), childRunIds: [], executionPolicy: policyEvidence, modelAbortController: new AbortController(), started: Date.now(), resumedFrom: resumeSource?.id || null, resumeFromNode: resumeFromNode || null, ...(triggerContext ? { triggerContext } : {}) }
   runs.set(runId, run)
   persistRun(runId, run) // persist at start so it survives restarts (durability)
   res.json({ runId })
@@ -2219,13 +2239,36 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         outputs[nid] = upstream || input
         const timeout = Math.max(60000, Math.min(86400000, Number(d.timeoutMs) || 21600000))
         const startedWaiting = Date.now()
-        pushEvent(run, 'info', `◎ Approval required: ${d.message || d.label || 'Review the result before continuing'}`, nid)
-        while (!run.approvals[nid] && !run.cancelled && Date.now() - startedWaiting < timeout) await new Promise(resolve => setTimeout(resolve, 500))
+        const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
+        const requested = requestApproval(run.control, {
+          runId: logicalRunId,
+          workflowVersionHash: run.checkpoint.workflowVersionHash,
+          nodeExecKey: run.checkpoint.nodes[nid].execKey,
+          operationKey: run.checkpoint.nodes[nid].effect?.operationKey,
+          inputHash: run.checkpoint.nodes[nid].inputHash,
+          permissionHash: run.permissionHash,
+          message: d.message || d.label || 'Review the result before continuing',
+          nodeId: nid,
+          expiresAt: startedWaiting + timeout,
+        })
+        run.control = requested.control
+        let approval = run.control.approvals[requested.approval.id]
+        if (approval.state === 'pending') {
+          run.checkpoint = waitNode(run.checkpoint, nid, attemptId, { kind: 'approval', ref: approval.id })
+          persistRun(runId, run)
+          pushEvent(run, 'info', `◎ Approval required: ${d.message || d.label || 'Review the result before continuing'}`, nid)
+        }
+        while (approval.state === 'pending' && !run.cancelled && Date.now() - startedWaiting < timeout) {
+          await new Promise(resolve => setTimeout(resolve, 250))
+          approval = run.control.approvals[requested.approval.id]
+        }
         if (run.cancelled) return
-        if (!run.approvals[nid]) throw new Error(`${d.label || nid} approval timed out`)
-        if (run.approvals[nid].decision !== 'approved') throw new Error(`${d.label || nid} was rejected${run.approvals[nid].comment ? `: ${run.approvals[nid].comment}` : ''}`)
-        if (run.approvals[nid].comment) outputs[nid] += `\n\nReviewer direction:\n${run.approvals[nid].comment}`
-        pushEvent(run, 'done', `✔ ${d.label || nid} approved${run.approvals[nid].comment ? ` — ${run.approvals[nid].comment}` : ''}`, nid)
+        if (approval.state === 'pending') throw new Error(`${d.label || nid} approval timed out`)
+        if (run.checkpoint.nodes[nid].state === 'waiting') run.checkpoint = resumeWaitingNode(run.checkpoint, nid, attemptId, approval.id)
+        const comment = run.approvalComments[approval.id] || ''
+        if (approval.state !== 'approved') throw new Error(`${d.label || nid} was rejected${comment ? `: ${comment}` : ''}`)
+        if (comment) outputs[nid] += `\n\nReviewer direction:\n${comment}`
+        pushEvent(run, 'done', `✔ ${d.label || nid} approved${comment ? ` — ${comment}` : ''}`, nid)
         return
       }
 
@@ -2484,6 +2527,8 @@ app.post('/api/workflows/:id/run', async (req, res) => {
     }
     const executeCheckpointedNode = async nid => {
       if (!allowedNodes.has(nid) || ['succeeded', 'skipped'].includes(run.checkpoint.nodes[nid]?.state)) return executeNode(nid)
+      await waitIfPaused()
+      if (run.cancelled) return
       const predecessorEvidence = (incoming[nid] || []).map(edge => [edge.source, run.checkpoint.nodes[edge.source]?.outputHash || null])
       const inputHash = crypto.createHash('sha256').update(JSON.stringify({ workflowHash: run.checkpoint.workflowVersionHash, node: nodeById[nid], input, predecessorEvidence, permissionHash: run.permissionHash })).digest('hex')
       run.checkpoint = claimNode(run.checkpoint, nid, { inputHash })
@@ -2536,11 +2581,23 @@ app.get('/api/workflows/runs/:runId/events', (req, res) => {
 app.post('/api/workflows/runs/:runId/nodes/:nodeId/approval', (req, res) => {
   const run = runs.get(req.params.runId)
   if (!run || run.type !== 'workflow') return res.status(404).json({ error: 'active workflow run not found' })
-  const decision = req.body.decision === 'rejected' ? 'rejected' : 'approved'
-  run.approvals ||= {}
-  run.approvals[req.params.nodeId] = { decision, comment: String(req.body.comment || '').slice(0, 1000), at: Date.now() }
-  appendAudit('workflow_approval', { runId: req.params.runId, nodeId: req.params.nodeId, decision })
-  res.json({ ok: true, decision })
+  if (!['approved', 'rejected'].includes(req.body.decision)) return res.status(400).json({ error: 'decision must be approved or rejected', code: 'INVALID_APPROVAL_DECISION' })
+  const approval = pendingApprovalForNode(run.control, req.params.nodeId) || Object.values(run.control?.approvals || {}).find(item => item.nodeId === req.params.nodeId)
+  if (!approval) return res.status(409).json({ error: 'node is not waiting for approval', code: 'APPROVAL_NOT_PENDING' })
+  const comment = String(req.body.comment || '').slice(0, 1000)
+  const commentRef = comment ? `comment:${crypto.createHash('sha256').update(comment).digest('hex').slice(0, 16)}` : null
+  const commandId = String(req.body.commandId || `approval-command-${crypto.createHash('sha256').update(JSON.stringify({ runId: run.logicalRunId, approvalId: approval.id, decision: req.body.decision, commentRef })).digest('hex').slice(0, 24)}`)
+  try {
+    const decided = decideApproval(run.control, { approvalId: approval.id, decision: req.body.decision, commandId, expectedRevision: req.body.expectedRevision, expectedSubjectHash: req.body.expectedSubjectHash, actorId: String(req.body.actorId || 'local-owner'), commentRef })
+    run.control = decided.control
+    if (comment) run.approvalComments[approval.id] = redactReleaseValue(comment)
+    persistRun(run.id, run)
+    appendAudit('workflow_approval', { runId: req.params.runId, approvalId: approval.id, nodeId: req.params.nodeId, decision: req.body.decision, commandId, replay: decided.replay })
+    res.json({ ok: true, decision: req.body.decision, approvalId: approval.id, subjectHash: approval.subjectHash, receipt: decided.receipt, replay: decided.replay })
+  } catch (error) {
+    const status = ['STALE_APPROVAL_REVISION', 'STALE_APPROVAL_SUBJECT'].includes(error.code) ? 412 : ['APPROVAL_COMMAND_CONFLICT', 'APPROVAL_DECISION_CONFLICT'].includes(error.code) ? 409 : 400
+    res.status(status).json({ error: error.message, code: error.code || 'APPROVAL_DECISION_FAILED' })
+  }
 })
 app.get('/api/workflows/runs/:runId/checkpoint', (req, res) => {
   const run = runs.get(req.params.runId) || readJson(path.join(RUNS_DIR, `${req.params.runId}.json`), null)

@@ -161,11 +161,99 @@ try {
   assert.equal(stoppedForReview.checkpoint.nodes.post.effect.state, 'ambiguous')
   assert.equal(mutatingCalls, 1)
 
+  const approvalWorkflow = {
+    schemaVersion: 2,
+    id: 'checkpoint-approval-live',
+    name: 'Checkpoint approval live',
+    settings: { restartRecovery: true },
+    nodes: [
+      { id: 'in', type: 'input', data: { label: 'Input' } },
+      { id: 'approve', type: 'human-approval', data: { label: 'Approve', message: 'Approve durable recovery', timeoutMs: 60000 } },
+      { id: 'out', type: 'output', data: { label: 'Output' } },
+    ],
+    edges: [{ id: 'a', source: 'in', target: 'approve' }, { id: 'b', source: 'approve', target: 'out' }],
+  }
+  response = await request('/api/workflows', { method: 'POST', ...json(approvalWorkflow) })
+  assert.equal(response.response.status, 200, JSON.stringify(response.body))
+  response = await request(`/api/workflows/${approvalWorkflow.id}/run`, { method: 'POST', ...json({ input: 'approval-payload' }) })
+  assert.equal(response.response.status, 200, JSON.stringify(response.body))
+  const approvalRunId = response.body.runId
+  const waitingApproval = await waitFor(async () => {
+    const detail = (await request(`/api/runs/${approvalRunId}/detail`)).body
+    const approval = Object.values(detail.control?.approvals || {})[0]
+    return approval?.state === 'pending' && detail.checkpoint?.nodes?.approve?.state === 'waiting' ? { detail, approval } : null
+  }, 'approval did not become durably pending')
+  await stopServer('SIGKILL')
+  server = await startServer()
+  const recoveredApproval = await waitFor(async () => {
+    const original = JSON.parse(fs.readFileSync(path.join(dataDir, 'runs', `${approvalRunId}.json`), 'utf8'))
+    if (!original.recoveredBy) return null
+    const detail = (await request(`/api/runs/${original.recoveredBy}/detail`)).body
+    const approval = Object.values(detail.control?.approvals || {})[0]
+    return approval?.state === 'pending' && detail.checkpoint?.nodes?.approve?.state === 'waiting' ? { detail, approval } : null
+  }, 'pending approval did not survive restart')
+  assert.equal(recoveredApproval.approval.id, waitingApproval.approval.id)
+  assert.equal(recoveredApproval.approval.subjectHash, waitingApproval.approval.subjectHash)
+  const approvalCommand = { decision: 'approved', commandId: 'approval-live-command', expectedRevision: recoveredApproval.approval.revision, expectedSubjectHash: recoveredApproval.approval.subjectHash, comment: 'continue safely' }
+  response = await request(`/api/workflows/runs/${recoveredApproval.detail.id}/nodes/approve/approval`, { method: 'POST', ...json(approvalCommand) })
+  assert.equal(response.response.status, 200, JSON.stringify(response.body))
+  const approvalReceipt = response.body.receipt
+  const completedApproval = await waitFor(async () => {
+    const detail = (await request(`/api/runs/${recoveredApproval.detail.id}/detail`)).body
+    return detail.status === 'done' ? detail : null
+  }, 'recovered approval workflow did not complete')
+  response = await request(`/api/workflows/runs/${recoveredApproval.detail.id}/nodes/approve/approval`, { method: 'POST', ...json(approvalCommand) })
+  assert.equal(response.response.status, 200)
+  assert.equal(response.body.replay, true)
+  assert.equal(response.body.receipt.committedAt, approvalReceipt.committedAt)
+  response = await request(`/api/workflows/runs/${recoveredApproval.detail.id}/nodes/approve/approval`, { method: 'POST', ...json({ decision: 'rejected', commandId: 'approval-live-conflict' }) })
+  assert.equal(response.response.status, 409)
+  assert.equal(completedApproval.checkpoint.nodes.approve.attemptsStarted, 2)
+
+  const pauseWorkflow = {
+    schemaVersion: 2,
+    id: 'checkpoint-manual-pause-live',
+    name: 'Checkpoint manual pause live',
+    settings: { restartRecovery: true },
+    nodes: [{ id: 'in', type: 'input', data: { label: 'Input' } }, { id: 'slow', type: 'delay', data: { label: 'Slow', durationMs: 1200 } }, { id: 'out', type: 'output', data: { label: 'Output' } }],
+    edges: [{ id: 'a', source: 'in', target: 'slow' }, { id: 'b', source: 'slow', target: 'out' }],
+  }
+  response = await request('/api/workflows', { method: 'POST', ...json(pauseWorkflow) })
+  assert.equal(response.response.status, 200, JSON.stringify(response.body))
+  response = await request(`/api/workflows/${pauseWorkflow.id}/run`, { method: 'POST', ...json({ input: 'pause-payload' }) })
+  const pauseRunId = response.body.runId
+  await waitFor(async () => (await request(`/api/runs/${pauseRunId}/detail`)).body.checkpoint?.nodes?.slow?.state === 'running', 'pause workflow did not enter its slow node')
+  response = await request(`/api/runs/${pauseRunId}/pause`, { method: 'POST', ...json({ commandId: 'pause-live-command', expectedGeneration: 0 }) })
+  assert.equal(response.response.status, 200, JSON.stringify(response.body))
+  assert.equal(response.body.receipt.generation, 1)
+  await stopServer('SIGKILL')
+  server = await startServer()
+  const recoveredPause = await waitFor(async () => {
+    const original = JSON.parse(fs.readFileSync(path.join(dataDir, 'runs', `${pauseRunId}.json`), 'utf8'))
+    if (!original.recoveredBy) return null
+    const detail = (await request(`/api/runs/${original.recoveredBy}/detail`)).body
+    return detail.status === 'running' && detail.paused && detail.control?.manualPause?.paused ? detail : null
+  }, 'manual pause did not survive restart')
+  await delay(1400)
+  const stillPaused = (await request(`/api/runs/${recoveredPause.id}/detail`)).body
+  assert.equal(stillPaused.status, 'running')
+  assert.equal(stillPaused.checkpoint.nodes.slow.state, 'pending')
+  response = await request(`/api/runs/${recoveredPause.id}/resume`, { method: 'POST', ...json({ commandId: 'resume-live-command', expectedGeneration: 1 }) })
+  assert.equal(response.response.status, 200, JSON.stringify(response.body))
+  const completedPause = await waitFor(async () => {
+    const detail = (await request(`/api/runs/${recoveredPause.id}/detail`)).body
+    return detail.status === 'done' ? detail : null
+  }, 'explicitly resumed workflow did not complete')
+  assert.equal(completedPause.control.manualPause.paused, false)
+  assert.equal(completedPause.control.manualPause.generation, 2)
+
   console.log('✓ committed file effect was reconciled after a deterministic post-write crash without re-execution')
   console.log('✓ interrupted computational branch was retried with a fenced second attempt')
   console.log('✓ logical execution identity survived SIGKILL and automatic restart recovery')
   console.log('✓ uncertain mutating HTTP effect stopped for review without a blind retry')
-  console.log('\n== RESULT: 4 passed, 0 failed ==')
+  console.log('✓ pending approval survived restart with stable identity and replay-safe decision receipt')
+  console.log('✓ explicit manual pause survived restart and required an explicit generation-checked resume')
+  console.log('\n== RESULT: 6 passed, 0 failed ==')
 } finally {
   await stopServer().catch(() => {})
   if (mockServer) await new Promise(resolve => mockServer.close(resolve)).catch(() => {})

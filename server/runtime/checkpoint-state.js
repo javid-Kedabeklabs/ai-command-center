@@ -180,6 +180,27 @@ export function failNode(snapshot, nodeId, attemptId, errorRef = null, { ambiguo
   })
 }
 
+export function waitNode(snapshot, nodeId, attemptId, wait) {
+  return next(snapshot, copy => {
+    const node = assertNode(copy, nodeId)
+    requireCurrentAttempt(node, attemptId)
+    if (!wait?.kind || !wait?.ref) throw new Error(`wait state for ${nodeId} requires a kind and reference`)
+    node.state = 'waiting'
+    node.wait = clone(wait)
+    node.activeAttempt.phase = 'waiting'
+  })
+}
+
+export function resumeWaitingNode(snapshot, nodeId, attemptId, waitRef) {
+  return next(snapshot, copy => {
+    const node = assertNode(copy, nodeId)
+    if (node.state !== 'waiting' || node.activeAttempt?.id !== attemptId || node.wait?.ref !== waitRef) throw new Error(`stale or inactive wait for ${nodeId}`)
+    node.state = 'running'
+    node.activeAttempt.phase = 'claimed'
+    delete node.wait
+  })
+}
+
 export function resetCheckpointNodes(snapshot, nodeIds) {
   const selected = new Set((nodeIds || []).map(String))
   return next(snapshot, copy => {
@@ -204,6 +225,11 @@ export function recoverCheckpoint(snapshot, { runtimeEpoch = crypto.randomUUID()
   return next(snapshot, copy => {
     copy.runtimeEpoch = runtimeEpoch
     for (const node of Object.values(copy.nodes)) {
+      if (node.state === 'waiting') {
+        node.state = 'pending'
+        delete node.activeAttempt
+        continue
+      }
       if (node.state !== 'running') continue
       const decision = reconcile[node.nodeId]
       if (node.effect?.state === 'confirmed') {
