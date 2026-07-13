@@ -6,7 +6,7 @@
 - Phase: 8 — Governance and security hardening
 - Base commit: `ba4f2cb` (`Harden local requests and redact release evidence`)
 - Task: enforce deny-wins environment permissions and symlink-safe core filesystem access
-- Commit: pending final staged gates
+- Commit: `d398dbe` (`Enforce deny-wins capabilities and safe file boundaries`)
 
 ## Completed
 
@@ -17,6 +17,8 @@
 - Added `server/security/safe-files.js` with canonical-root containment, traversal/absolute/NUL rejection, full parent-chain symlink rejection, safe parent creation, regular-file enforcement, and final-component `O_NOFOLLOW` where supported.
 - Integrated the boundary into run read/write/Python scripts, artifacts, AgentBrain CRUD/export/import, workflow skill reads, Obsidian vault operations, and external file/folder input validation. Recursive folder input skips symlinks.
 - Added an isolated `ACC_BRAIN_DIR` test override that is constrained to the repository worktree and cannot redirect production state outside it.
+- Published sanitized public default-branch snapshot `b4c6888`; an unauthenticated GitHub API/raw-content check confirms it is public, current, and excludes runtime data.
+- Reloaded the committed implementation through host request `host-272201c8519779d4`, receipt SHA-256 `675f7bf995e09404916883c3829c20c04319beb79ec7e050ffa762d2217b239c`; health returned HTTP 200 after two checks.
 
 ## Verification
 
@@ -30,6 +32,7 @@
 - Smoke: 30/30 on fresh isolated state.
 - Playwright/Axe: 3/3 focused and 90/90 across 30 repeated isolated runs; browser data and AgentBrain fixtures are both temporary.
 - TypeScript and production build: passed.
+- Committed host: wrong Host 403, hostile Origin 403, unknown capability 400, safe-files 6/6, effective permissions 9/9, smoke 30/30, listener PID 20488 with repository cwd.
 
 ## Learned constraints
 
@@ -41,6 +44,5 @@
 
 ## Next
 
-- Run final broad/staged gates, commit, refresh the sanitized public review snapshot, and reload/verify the committed host.
 - Implement a versioned per-node checkpoint/attempt state machine and ambiguous side-effect reconciliation with parallel crash-boundary tests.
 - Continue with durable approval/pause and the hermetic release journey.

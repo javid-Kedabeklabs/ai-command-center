@@ -2,13 +2,12 @@
 
 Status: READY
 
-Commit, publish, and host-verify deny-wins environment permission ceilings and symlink-safe filesystem access, then implement per-node durable recovery and side-effect reconciliation.
+Implement per-node durable recovery and exactly-once-or-stop side-effect reconciliation.
 
 Immediate work:
-- Review and stage only permission/filesystem product, tests, and documentation; exclude runtime/user data.
-- Run broad isolated regression, staged secret scan, and exact diff review.
-- Commit one security checkpoint, refresh the squashed sanitized public review branch, then reload and verify the host once.
 - Define a versioned per-node checkpoint/attempt state machine with explicit ambiguous side-effect recovery.
+- Characterize the legacy topological-prefix behavior and add a pure transition/recovery reducer before changing the live route.
 - Add crash-boundary tests for parallel branches before replacing the legacy topological-prefix recovery model.
+- Route effectful node classes through stable logical operation keys and prepared/inflight/confirmed/ambiguous phases.
 
-Definition of done: Testing/Production cannot acquire an unreviewed capability; explicit exact grants work; custom/plugin/child policy cannot escalate; run/artifact/AgentBrain filesystem symlink escapes fail closed; regressions stay green; public and host checkpoints match the committed source. The following slice must prove that completed parallel nodes are neither skipped nor repeated across every modeled crash boundary.
+Definition of done: a versioned snapshot records actual per-node state and fenced attempts; completed parallel nodes are neither skipped nor repeated across every modeled crash boundary; confirmed effects finalize without reissue; ambiguous effects durably stop in `needs_review`; existing historical run records remain readable; regressions stay green.

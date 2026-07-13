@@ -2,7 +2,7 @@
 
 This branch is a sanitized source snapshot for independent AI review.
 
-- Local source checkpoint: `d398dbe` (`Enforce deny-wins capabilities and safe file boundaries`)
+- Local source checkpoint: `696b7ca` (`Record permission hardening verification checkpoint`)
 - Runtime data, audit logs, profiles, generated stores, credentials, local models, and user content are excluded.
 - Treat `docs/IMPLEMENTATION_STATUS.md`, `HANDOFF.md`, and the current source/tests as authoritative; do not rely on older review commit `ad82a1a`.
 
