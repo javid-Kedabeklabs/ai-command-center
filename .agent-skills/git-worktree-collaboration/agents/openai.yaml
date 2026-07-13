@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Worktree Collaboration"
+  short_description: "Safely delegate isolated implementation tasks"
+  default_prompt: "Create or review a bounded coding task using exclusive file ownership, an isolated Git worktree, deterministic tests, and a gated integration handoff."

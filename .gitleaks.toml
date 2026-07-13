@@ -1,0 +1,4 @@
+[allowlist]
+description = "Known synthetic credential used by the local-factory redaction test"
+regexTarget = "secret"
+regexes = ['''^abc123456789$''']

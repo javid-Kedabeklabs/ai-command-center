@@ -1,0 +1,7 @@
+# Testing Evidence
+
+The live checkpoint currently includes pure schema/port/scheduler suites; runtime recovery; MCP stdio/HTTP; triggers; evaluation gates; permission/local-only enforcement; Company World consistency; the original smoke suite; TypeScript checking; and production build.
+
+See root `TESTING.md` for commands. Browser end-to-end, visual regression, comprehensive accessibility/performance, backup/restore, and long-duration restart testing remain required before final acceptance.
+
+Additive amendment suites include `node scripts/collaboration-foundation-tests.mjs` for task packets, path/ownership conflicts, structured event/result parsing, redaction, capacity, backoff, and model fallback; `node scripts/collaboration-state-tests.mjs` for atomic task state, restart recovery, corruption, owned processes, repository/executable/environment bounds, and cancellation; `node scripts/collaboration-worktree-tests.mjs` for clean-base worktrees, commit/scope/symlink verification, explicit integration, conflict abort, and guarded cleanup; `node scripts/agent-role-card-tests.mjs` for primitives, Role Cards, reviewer modes, resolution isolation, legacy mapping, and ambiguity; and `node scripts/trigger-folder-tests.mjs` for the pure hardened folder foundation. Normal tests use fixtures and never consume live Codex or Claude capacity. A live Claude pilot is a separate explicit operational gate.
