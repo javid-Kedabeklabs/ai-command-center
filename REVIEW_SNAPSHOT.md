@@ -2,7 +2,7 @@
 
 This branch is a sanitized source snapshot for independent AI review.
 
-- Local source checkpoint: `949484b` (`Follow durable workflow recovery in the UI`)
+- Local source checkpoint: `789cdf8` (`Persist subworkflow and trigger recovery receipts`)
 - Runtime data, audit logs, profiles, generated stores, credentials, local models, and user content are excluded.
 - Treat `docs/IMPLEMENTATION_STATUS.md`, `HANDOFF.md`, and the current source/tests as authoritative; do not rely on older review commit `ad82a1a`.
 
