@@ -561,12 +561,19 @@ function WorkflowStudio({ mode, onModeChange }: { mode: Mode; onModeChange: (mod
       setNodes(ns => ns.map(n => ({ ...n, data: { ...n.data, status: '' } })))
       const started = await api.runWorkflow(savedId, inputOverride ?? input, profileId || undefined, safe, options)
       setRunId(started.runId)
+      let activeRunId = started.runId
       subscribeWfRun(started.runId, ev => {
         setEvents(old => [...old, ev])
         if (ev.nodeId) setNodes(ns => ns.map(n => n.id === ev.nodeId ? { ...n, data: { ...n.data, status: ev.text.startsWith('◎') ? 'awaiting-approval' : ev.text.startsWith('○') ? 'skipped' : ev.type === 'done' ? 'succeeded' : ev.type === 'error' ? 'failed' : 'running' } } : n))
       }, async () => {
         setRunning(false); setPaused(false)
-        api.artifacts().then(all => setArtifacts(all.filter(a => a.runId === started.runId))).catch(() => {})
+        api.artifacts().then(all => setArtifacts(all.filter(a => a.runId === activeRunId))).catch(() => {})
+      }, (recoveredRunId, detail) => {
+        activeRunId = recoveredRunId
+        setRunId(recoveredRunId)
+        setRunning(['running', 'paused'].includes(detail.status))
+        setPaused(!!detail.control?.manualPause?.paused || !!detail.paused)
+        setNotice(`Recovered durable run ${recoveredRunId.slice(-6)}`)
       })
     } catch (e) { setRunning(false); setNotice(`Run could not start: ${e}`) }
   }, [validate, save, input, profileId, setNodes])

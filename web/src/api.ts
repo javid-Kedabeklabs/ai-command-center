@@ -26,7 +26,7 @@ export type ToolInfo = { key: string; name: string; desc: string; status: string
 export type SecretReference = { id: string; label: string; revision: number; createdAt: number; updatedAt: number; configured: boolean; status: 'connected' | 'missing' | 'denied'; secretStore: string; usedByCount: number }
 export type RunSummary = { id: string; type?: string; title?: string; agentName?: string; avatar: string; task: string; status: string; started: number; ended?: number; dir?: string }
 export type RunArtifact = { name: string; size: number; isDir?: boolean }
-export type RunDetail = { id: string; type?: string; title?: string; workflowName?: string; agentName?: string; avatar?: string; task?: string; status: string; started?: number; ended?: number; result?: string; events?: RunEvent[]; artifacts?: RunArtifact[] }
+export type RunDetail = { id: string; type?: string; title?: string; workflowName?: string; agentName?: string; avatar?: string; task?: string; status: string; paused?: boolean; recoveredBy?: string; started?: number; ended?: number; result?: string; events?: RunEvent[]; artifacts?: RunArtifact[]; control?: { manualPause?: { paused: boolean; generation: number }; approvals?: Record<string, { id: string; nodeId: string; subjectHash: string; revision: number; state: string }> }; checkpoint?: { schemaVersion?: number; revision?: number; nodes?: Record<string, { state: string; attemptsStarted: number }> } }
 export type Artifact = { runId: string; name: string; size: number; mtime: number; source: string; type: string; status: string }
 export type KnowledgeSource = { id: string; name: string; type: string; chunks: number; addedAt: number }
 export type KnowledgeHit = { text: string; source: string; score: number }
@@ -196,11 +196,34 @@ export const api = {
   skills: (): Promise<Skill[]> => fetch('/api/skills').then(j),
 }
 
-export function subscribeWfRun(runId: string, onEvent: (e: RunEvent & { nodeId?: string }) => void, onEnd: () => void): () => void {
-  const es = new EventSource(`/api/workflows/runs/${runId}/events`)
-  es.onmessage = e => { try { onEvent(JSON.parse(e.data)) } catch {} }
-  es.onerror = () => { es.close(); onEnd() }
-  return () => es.close()
+export function subscribeWfRun(runId: string, onEvent: (e: RunEvent & { nodeId?: string }) => void, onEnd: () => void, onRecovery?: (runId: string, detail: RunDetail) => void): () => void {
+  let currentRunId = runId, es: EventSource | null = null, closed = false
+  const connect = () => {
+    if (closed) return
+    es = new EventSource(`/api/workflows/runs/${currentRunId}/events`)
+    es.onmessage = e => { try { onEvent(JSON.parse(e.data)) } catch {} }
+    es.onerror = () => { es?.close(); es = null; void inspect(0) }
+  }
+  const inspect = async (attempt: number) => {
+    if (closed) return
+    try {
+      const detail = await api.runDetail(currentRunId)
+      if (detail.recoveredBy) {
+        currentRunId = detail.recoveredBy
+        const recovered = await api.runDetail(currentRunId)
+        onRecovery?.(currentRunId, recovered)
+        connect()
+        return
+      }
+      if (['running', 'paused'].includes(detail.status)) { window.setTimeout(connect, 350); return }
+      if (detail.status === 'interrupted' && attempt < 20) { window.setTimeout(() => void inspect(attempt + 1), 250); return }
+    } catch {
+      if (attempt < 20) { window.setTimeout(() => void inspect(attempt + 1), 250); return }
+    }
+    onEnd()
+  }
+  connect()
+  return () => { closed = true; es?.close() }
 }
 
 export async function streamChat(model: string, messages: { role: string; content: string }[], onChunk: (s: string) => void) {
