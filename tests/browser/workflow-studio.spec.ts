@@ -106,6 +106,13 @@ test('live backend saves, versions, approves, completes, and exposes safe run ev
     return approval?.state
   }).toBe('pending')
 
+  const worldWhileWaiting = await (await page.request.get('/api/company-world/state')).json()
+  const authoritativeWorldRun = worldWhileWaiting.activeRuns.find((item: any) => item.id === runId)
+  expect(authoritativeWorldRun).toMatchObject({ status: 'waiting-approval', currentNodeId: 'approve', pendingApprovalCount: 1 })
+  expect(authoritativeWorldRun.checkpointRevision).toBeGreaterThan(0)
+  expect(authoritativeWorldRun.activity).toBe('Waiting for 1 durable approval')
+  expect(authoritativeWorldRun).not.toHaveProperty('events')
+
   const decisionResponse = await page.request.post(`/api/workflows/runs/${runId}/nodes/approve/approval`, { data: {
     decision: 'approved',
     commandId: `browser-approve-${suffix}`,

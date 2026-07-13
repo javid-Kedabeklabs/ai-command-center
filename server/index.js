@@ -626,7 +626,20 @@ app.get('/api/runs', (_req, res) => {
 })
 app.get('/api/company-world/state', async (_req, res) => {
   const agents = loadAgents().map(agent => ({ id: agent.id, name: agent.name, avatar: agent.avatar || '🤖', role: agent.role || agent.name, department: agent.department || 'General Operations', model: agent.model, permissions: agent.permissions || 'standard', skills: agent.skills || [] }))
-  const activeRuns = [...runs.entries()].filter(([, run]) => run.status === 'running' || run.paused).map(([id, run]) => { const latest = [...(run.events || [])].reverse().find(event => event.nodeId || event.type === 'info' || event.type === 'log'); return { id, type: run.type, workflowId: run.workflowId || null, workflowName: run.workflowName || null, agentId: run.agentId || null, agentName: run.agentName || null, status: run.paused ? 'paused' : run.status, task: run.task, currentNodeId: latest?.nodeId || null, activity: latest?.text || 'Waiting', started: run.started } })
+  const activeRuns = [...runs.entries()].filter(([, run]) => ['running', 'needs_review'].includes(run.status) || run.paused).map(([id, run]) => {
+    const checkpointNodes = Object.values(run.checkpoint?.nodes || {})
+    const activeNodes = checkpointNodes.filter(node => ['running', 'waiting', 'needs_review'].includes(node.state)).map(node => ({ nodeId: node.nodeId, state: node.state, attemptsStarted: node.attemptsStarted, waitKind: node.wait?.kind || null, effectState: node.effect?.state || null }))
+    const pendingApprovals = Object.values(run.control?.approvals || {}).filter(approval => approval.state === 'pending')
+    const manuallyPaused = run.control?.manualPause?.paused === true || run.paused === true
+    const needsReview = activeNodes.some(node => node.state === 'needs_review') || run.status === 'needs_review'
+    const status = manuallyPaused ? 'paused' : needsReview ? 'needs-review' : pendingApprovals.length ? 'waiting-approval' : run.status
+    const activity = manuallyPaused ? 'Explicitly paused by the owner'
+      : needsReview ? 'Stopped for reconciliation review'
+      : pendingApprovals.length ? `Waiting for ${pendingApprovals.length} durable approval${pendingApprovals.length === 1 ? '' : 's'}`
+      : activeNodes.length ? `Executing ${activeNodes.length} checkpointed node${activeNodes.length === 1 ? '' : 's'}`
+      : 'Scheduling ready work from durable state'
+    return { id, logicalRunId: run.logicalRunId || id, type: run.type, workflowId: run.workflowId || null, workflowVersion: run.workflowVersion || null, workflowName: run.workflowName || null, agentId: run.agentId || null, agentName: run.agentName || null, status, task: run.task, currentNodeId: activeNodes[0]?.nodeId || null, activeNodes, pendingApprovalCount: pendingApprovals.length, checkpointRevision: run.checkpoint?.revision || null, recoveredFrom: run.resumedFrom || null, activity, started: run.started }
+  })
   const workflows = fs.readdirSync(WF_DIR).filter(file => file.endsWith('.json')).map(file => readJson(path.join(WF_DIR, file), null)).filter(Boolean).map(workflow => ({ id: workflow.id, name: workflow.name, project: workflow.project || 'Command Center', environment: workflow.environment || 'development', nodeCount: workflow.nodes?.length || 0 }))
   const departments = [...new Set(agents.map(agent => agent.department))].map((name, index) => ({ id: safeSlug(name), name, color: ['#8b7cf6','#42b9d0','#44b974','#f0a34a'][index % 4], agentIds: agents.filter(agent => agent.department === name).map(agent => agent.id) }))
   const resources = await systemInfo()

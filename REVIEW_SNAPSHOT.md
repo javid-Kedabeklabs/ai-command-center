@@ -2,7 +2,7 @@
 
 This branch is a sanitized source snapshot for independent AI review.
 
-- Local source checkpoint: `82ef523` (`Bind evaluations and plugins to exact evidence`).
+- Local source checkpoint: `fa3f677` (`Render Company World from durable runtime truth`).
 - Runtime data, audit logs, profiles, generated stores, credentials, local models, and user content are excluded.
 - Treat `docs/IMPLEMENTATION_STATUS.md`, `HANDOFF.md`, and the current source/tests as authoritative; do not rely on older review commit `ad82a1a`.
 
