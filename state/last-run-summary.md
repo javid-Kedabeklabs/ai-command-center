@@ -2,11 +2,11 @@
 
 ## Iteration identity
 
-- Timestamp: 2026-07-13T22:40:00Z
+- Timestamp: 2026-07-13T23:37:30Z
 - Phase: critical runtime durability
 - Base commit: `519fafd` (`Prioritize the full delivery portfolio`)
-- Task: extend exactly-once-or-stop handling through subworkflows, trigger recovery, and browser recovery following
-- Commits: `9ab9403`, `c38154e`, `6c6c715`, `7e907f1`, `8a05cc4`, `949484b`, `789cdf8`
+- Task: complete the safe evidence product path and make the live backend journey a browser release gate
+- Commits through prior checkpoint: `9ab9403`, `c38154e`, `6c6c715`, `7e907f1`, `8a05cc4`, `949484b`, `789cdf8`, `f150cc8`
 
 ## Completed
 
@@ -27,6 +27,9 @@
 - Redaction now covers registered secret encodings, and secret-bearing file/Obsidian writes are redacted before artifact commitment.
 - Workflow Studio renders approval authority and node status from durable control/checkpoint records and submits revision/subject-bound approval commands.
 - Added `npm test` / `npm run verify:release` as the reproducible integration contract across runtime crashes, subworkflow/trigger receipts, secret canaries, typecheck, build, and browser tests.
+- Added a typed safe-evidence client and a verified-evidence panel in Run Center. It polls alongside active run detail and shows only linked version, checkpoint, trigger, approval, node, effect, and artifact metadata receipts.
+- Added a live-backend browser acceptance journey that saves a typed workflow, creates its immutable run version, reaches durable approval, submits a revision/subject-bound decision, completes, and verifies safe evidence in Run Center without route mocks.
+- Corrected Workflow Studio's durable approval state handling from the nonexistent `requested` display value to the authoritative `pending` state, restoring approval controls and waiting-node truthfulness.
 - Existing request guarding, deny-wins permissions, symlink-safe filesystem boundaries, immutable versions, typed ports, Keychain references, and trigger-store durability remain in force.
 
 ## Verification
@@ -38,9 +41,9 @@
 - Trigger store/idempotency: 17/17.
 - Safe filesystem boundary: 6/6.
 - Phase 0 contract: 37/37 on isolated state.
-- Browser Playwright suite: 3/3.
+- Browser Playwright suite: 4/4, including the live save/version/run/approve/evidence journey.
 - Safe evidence canary: 1/1 across durable data, artifacts, detail/evidence APIs, audit, and bundle export; redaction transforms: 11/11.
-- Unified `npm test` release verification passed 12 gates with receipt SHA-256 `57d8b3740e96324d3d6d39a7cfe2167b7c0c9479ac92f13cf86b8a11de9617d9`.
+- Unified release verification passed all 12 gates with receipt SHA-256 `59406fa1c0ee9c599c955bdad7db35eb0f68c021d5e6baea42dc4e9b5be2a54f`.
 - Smoke: 30/30 on isolated state.
 - TypeScript and production build: passed.
 - Staged and public-snapshot Gitleaks scans: passed.
@@ -61,6 +64,6 @@
 
 ## Next
 
-- Add the complete live-backed browser build/save/run/approve/evidence journey.
-- Surface safe linked evidence in Run Center.
-- Continue exact-version governance/evaluation/plugin integration and packaging inventory.
+- Continue exact-version governance, evaluation, reusable-component, and reviewed-plugin UX integration against the safe evidence contract.
+- Make Company World render only authoritative persisted checkpoint/control states.
+- Complete packaging inventory, backup/restore rehearsal, upgrade/rollback receipts, and the remaining hardening audit.

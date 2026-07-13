@@ -27,6 +27,7 @@ export type SecretReference = { id: string; label: string; revision: number; cre
 export type RunSummary = { id: string; type?: string; title?: string; agentName?: string; avatar: string; task: string; status: string; started: number; ended?: number; dir?: string }
 export type RunArtifact = { name: string; size: number; isDir?: boolean }
 export type RunDetail = { id: string; type?: string; title?: string; workflowName?: string; agentName?: string; avatar?: string; task?: string; status: string; paused?: boolean; recoveredBy?: string; started?: number; ended?: number; result?: string; events?: RunEvent[]; artifacts?: RunArtifact[]; control?: { manualPause?: { paused: boolean; generation: number }; approvals?: Record<string, { id: string; nodeId: string; subjectHash: string; revision: number; state: string }> }; checkpoint?: { schemaVersion?: number; revision?: number; nodes?: Record<string, { state: string; attemptsStarted: number }> } }
+export type RunEvidence = { schemaVersion: number; evidenceId: string; run: { id: string; logicalRunId: string; workflowId: string | null; workflowVersion: string | null; workflowVersionHash: string | null; status: string; started: number | null; ended: number | null; resumedFrom: string | null; recoveredBy: string | null }; triggerReceipt: { receiptRef: string; deliveryId: string; triggerId: string; workflowVersion: string } | null; manualPause: { paused: boolean; generation: number } | null; approvals: Array<{ id: string; nodeId: string; subjectHash: string; revision: number; state: string }>; checkpoint: { schemaVersion: number | null; revision: number | null; nodes: Record<string, { state: string; attemptsStarted: number; inputHash: string | null; outputHash: string | null; effect: { operationKey: string; requestHash: string; state: string; receiptRef: string | null } | null }> }; events: RunEvent[]; artifacts: RunArtifact[] }
 export type Artifact = { runId: string; name: string; size: number; mtime: number; source: string; type: string; status: string }
 export type KnowledgeSource = { id: string; name: string; type: string; chunks: number; addedAt: number }
 export type KnowledgeHit = { text: string; source: string; score: number }
@@ -92,6 +93,7 @@ export const api = {
   runs: (): Promise<RunSummary[]> => fetch('/api/runs').then(j),
   companyWorld: (): Promise<any> => fetch('/api/company-world/state').then(j),
   runDetail: (id: string): Promise<RunDetail> => fetch(`/api/runs/${id}/detail`).then(j),
+  runEvidence: (id: string): Promise<RunEvidence> => fetch(`/api/runs/${id}/evidence`).then(j),
   artifacts: (): Promise<Artifact[]> => fetch('/api/artifacts').then(j),
   artifactText: (runId: string, name: string): Promise<string> => fetch(`/api/runs/${runId}/artifact?name=${encodeURIComponent(name)}`).then(r => r.text()),
   brainTree: (): Promise<BrainFile[]> => fetch('/api/brain/tree').then(j),

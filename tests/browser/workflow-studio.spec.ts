@@ -69,3 +69,63 @@ test('workflow settings truthfully manage every persisted trigger state', async 
   const blocking = report.violations.filter(item => item.impact === 'serious' || item.impact === 'critical')
   expect(blocking, blocking.map(item => `${item.id}: ${item.help}`).join('\n')).toEqual([])
 })
+
+test('live backend saves, versions, approves, completes, and exposes safe run evidence', async ({ page }) => {
+  const suffix = Date.now().toString(36)
+  const workflowId = `browser-evidence-${suffix}`
+  const workflow = {
+    schemaVersion: 2,
+    id: workflowId,
+    name: `Browser evidence ${suffix}`,
+    settings: { restartRecovery: true },
+    nodes: [
+      { id: 'in', type: 'input', position: { x: 80, y: 160 }, data: { label: 'Input' } },
+      { id: 'approve', type: 'human-approval', position: { x: 360, y: 160 }, data: { label: 'Owner approval', message: 'Approve the live browser journey', timeoutMs: 30_000 } },
+      { id: 'out', type: 'output', position: { x: 640, y: 160 }, data: { label: 'Output' } },
+    ],
+    edges: [
+      { id: 'edge-in-approve', source: 'in', target: 'approve' },
+      { id: 'edge-approve-out', source: 'approve', target: 'out' },
+    ],
+  }
+
+  const saveResponse = await page.request.post('/api/workflows', { data: workflow })
+  expect(saveResponse.ok(), await saveResponse.text()).toBeTruthy()
+  const saved = await saveResponse.json()
+  expect(saved.id).toBe(workflowId)
+
+  const runResponse = await page.request.post(`/api/workflows/${workflowId}/run`, { data: { input: 'browser-live-payload' } })
+  expect(runResponse.ok(), await runResponse.text()).toBeTruthy()
+  const { runId } = await runResponse.json()
+
+  let approval: any = null
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${runId}/detail`)
+    const detail = await response.json()
+    approval = Object.values(detail.control?.approvals || {})[0]
+    return approval?.state
+  }).toBe('pending')
+
+  const decisionResponse = await page.request.post(`/api/workflows/runs/${runId}/nodes/approve/approval`, { data: {
+    decision: 'approved',
+    commandId: `browser-approve-${suffix}`,
+    expectedRevision: approval.revision,
+    expectedSubjectHash: approval.subjectHash,
+    comment: 'approved by live browser acceptance test',
+  } })
+  expect(decisionResponse.ok(), await decisionResponse.text()).toBeTruthy()
+
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${runId}/detail`)
+    return (await response.json()).status
+  }).toBe('done')
+
+  await page.getByRole('button', { name: /Runs$/ }).click()
+  await page.locator(`[data-run-id="${runId}"]`).click()
+  const evidence = page.getByTestId('run-evidence')
+  await expect(evidence).toBeVisible()
+  await expect(evidence).toContainText('Evidence receipt')
+  await expect(evidence).toContainText('approve approved')
+  await expect(evidence).toContainText('out')
+  await expect(evidence).not.toContainText('browser-live-payload')
+})

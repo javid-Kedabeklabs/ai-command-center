@@ -10,7 +10,7 @@ import {
   type SystemInfo, type Model, type Agent, type RunSummary, type RunEvent,
   type BrainFile, type BrainGraph, type StudioModel,
   subscribeWfRun, type AllModel, type Provider, type Workflow, type WfSummary,
-  type Profile, type ProfilesResp, type Template, type RunSummary as RunSum, type RunDetail, type Artifact,
+  type Profile, type ProfilesResp, type Template, type RunSummary as RunSum, type RunDetail, type RunEvidence, type Artifact,
   type KnowledgeSource, type KnowledgeHit, type ToolInfo, type Skill,
   type LocalFactoryStatus, type LocalFactoryTaskSummary,
 } from './api'
@@ -297,10 +297,19 @@ function RunCenter() {
   const [runs, setRuns] = useState<RunSum[]>([])
   const [sel, setSel] = useState<string>('')
   const [detail, setDetail] = useState<RunDetail | null>(null)
+  const [evidence, setEvidence] = useState<RunEvidence | null>(null)
   const refresh = () => api.runs().then(setRuns)
+  const loadRun = useCallback(async (id: string) => {
+    const [nextDetail, nextEvidence] = await Promise.all([
+      api.runDetail(id),
+      api.runEvidence(id).catch(() => null),
+    ])
+    setDetail(nextDetail)
+    setEvidence(nextEvidence)
+  }, [])
   useEffect(() => { refresh(); const iv = setInterval(refresh, 3000); return () => clearInterval(iv) }, [])
-  useEffect(() => { if (sel) api.runDetail(sel).then(setDetail); else setDetail(null) }, [sel])
-  useEffect(() => { if (sel && detail?.status === 'running') { const iv = setInterval(() => api.runDetail(sel).then(setDetail), 2500); return () => clearInterval(iv) } }, [sel, detail?.status])
+  useEffect(() => { if (sel) void loadRun(sel); else { setDetail(null); setEvidence(null) } }, [sel, loadRun])
+  useEffect(() => { if (sel && ['running', 'paused'].includes(detail?.status || '')) { const iv = setInterval(() => void loadRun(sel), 2500); return () => clearInterval(iv) } }, [sel, detail?.status, loadRun])
 
   const live = runs.filter(r => r.status === 'running' || r.status === 'paused')
   return (
@@ -330,6 +339,14 @@ function RunCenter() {
                 <a key={a.name} className="row" href={`/api/runs/${detail.id}/artifact?name=${encodeURIComponent(a.name)}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
                   <span>📄</span><span className="name">{a.name}</span><span className="meta spacer">{(a.size / 1024).toFixed(1)} KB</span>
                 </a>))}</div></>}
+            {evidence && <><div className="section-title">Verified evidence</div>
+              <div className="card" data-testid="run-evidence" style={{ padding: 12, background: 'var(--surface-2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><b>Evidence receipt</b><code title={evidence.evidenceId}>{evidence.evidenceId.slice(0, 16)}…</code></div>
+                <div className="meta" style={{ marginTop: 6 }}>Workflow {evidence.run.workflowVersion || 'unversioned'} · definition {evidence.run.workflowVersionHash || 'n/a'} · checkpoint r{evidence.checkpoint.revision ?? 0}</div>
+                {evidence.triggerReceipt && <div className="meta">Trigger receipt {evidence.triggerReceipt.receiptRef}</div>}
+                {!!evidence.approvals.length && <div className="meta">Approvals: {evidence.approvals.map(item => `${item.nodeId} ${item.state}`).join(' · ')}</div>}
+                <div className="rows" style={{ marginTop: 8 }}>{Object.entries(evidence.checkpoint.nodes).map(([nodeId, node]) => <div className="row" key={nodeId}><span><b>{nodeId}</b><small>{node.state} · {node.attemptsStarted} attempt{node.attemptsStarted === 1 ? '' : 's'}{node.effect?.receiptRef ? ` · ${node.effect.receiptRef}` : ''}</small></span></div>)}</div>
+              </div></>}
             <div className="section-title">Transcript</div>
             <div className="feed" style={{ flex: 1 }}>
               {(detail.events || []).map((e, i) => <div key={i} className={`ev-${e.type}`}>{e.text}</div>)}
@@ -343,7 +360,7 @@ function RunCenter() {
 function RunRow({ r, active, onClick, onChange, live }: { r: RunSum; active: boolean; onClick: () => void; onChange: () => void; live?: boolean }) {
   const m = STATUS_META[r.status] || { icon: '•', cls: '' }
   return (
-    <div className={`run-row ${active ? 'active' : ''}`} onClick={onClick}>
+    <div className={`run-row ${active ? 'active' : ''}`} data-run-id={r.id} onClick={onClick}>
       <span>{r.avatar}</span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div className="run-row-title">{r.title || r.agentName}</div>
