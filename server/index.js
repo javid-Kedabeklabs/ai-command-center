@@ -610,7 +610,8 @@ app.get('/api/runs/:id/artifact', (req, res) => {
 
 function runSummary(id, r) {
   return { id, type: r.type || (r.workflowName ? 'workflow' : 'agent'), title: r.workflowName || r.agentName || 'Run',
-    agentName: r.agentName, avatar: r.avatar || (r.workflowName ? '⛓' : '🤖'), task: r.task, status: r.status, started: r.started, ended: r.ended, dir: r.dir }
+    agentName: r.agentName, avatar: r.avatar || (r.workflowName ? '⛓' : '🤖'), task: r.task, status: r.status, started: r.started, ended: r.ended,
+    workflowId: r.workflowId || null, workflowVersion: r.workflowVersion || null, candidateId: r.candidateId || null, environment: r.environment || null }
 }
 app.get('/api/runs', (_req, res) => {
   const seen = new Set()
@@ -1498,6 +1499,15 @@ const BUILTIN_MARKETPLACE = [
   { id: 'quality-pack', name: 'Quality & Review Pack', version: '1.0.0', description: 'Reusable validation and review node definitions.', publisher: 'Command Center', verified: true, nodes: [] },
   { id: 'local-automation-pack', name: 'Local Automation Pack', version: '1.0.0', description: 'Local-first workflow templates and tool presets.', publisher: 'Command Center', verified: true, nodes: [] },
 ]
+const stablePluginValue = value => Array.isArray(value) ? value.map(stablePluginValue) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stablePluginValue(value[key])])) : value
+const pluginManifestHash = plugin => crypto.createHash('sha256').update(JSON.stringify(stablePluginValue({
+  id: plugin.id, name: plugin.name, version: plugin.version, publisher: plugin.publisher || null, license: plugin.license || null,
+  permissions: plugin.permissions || [], dependencies: plugin.dependencies || [], nodes: plugin.nodes || [], provenance: plugin.provenance || null,
+}))).digest('hex')
+const pluginReviewReceipt = ({ plugin, reviewedBy, reviewedAt }) => {
+  const body = { schemaVersion: 1, id: `plugin-review-${crypto.randomBytes(10).toString('hex')}`, pluginId: plugin.id, pluginVersion: plugin.version, manifestHash: plugin.manifestHash, decision: 'approved', reviewedBy, reviewedAt }
+  return { ...body, receiptHash: crypto.createHash('sha256').update(JSON.stringify(stablePluginValue(body))).digest('hex') }
+}
 app.get('/api/plugins', (_req, res) => {
   const installed = readJson(PLUGINS_FILE, [])
   res.json(BUILTIN_MARKETPLACE.map(x => ({ ...x, installed: installed.some(i => i.id === x.id), enabled: installed.find(i => i.id === x.id)?.enabled !== false })).concat(installed.filter(i => !BUILTIN_MARKETPLACE.some(x => x.id === i.id))))
@@ -1510,14 +1520,26 @@ app.post('/api/plugins/install', (req, res) => {
   const requestedPermissions = Array.isArray(source.permissions) ? [...new Set(source.permissions.map(String))].slice(0, 30) : []
   const unknownPermission = requestedPermissions.find(capability => !WORKFLOW_CAPABILITIES.includes(capability))
   if (unknownPermission) return res.status(400).json({ error: `unsupported plugin capability: ${unknownPermission}` })
-  const installed = readJson(PLUGINS_FILE, []), plugin = { ...source, permissions: requestedPermissions, dependencies: Array.isArray(source.dependencies) ? source.dependencies.slice(0, 50) : [], provenance: source.provenance || { source: builtin ? 'builtin-marketplace' : 'imported-bundle' }, signatureStatus: builtin ? 'verified' : 'unsigned', trustStatus: builtin ? 'verified' : 'untrusted', enabled: builtin, installedAt: Date.now() }
+  const installed = readJson(PLUGINS_FILE, []), dependencies = Array.isArray(source.dependencies) ? source.dependencies.slice(0, 50) : [], provenance = source.provenance || { source: builtin ? 'builtin-marketplace' : 'imported-bundle' }
+  const plugin = { ...source, permissions: requestedPermissions, dependencies, provenance, signatureStatus: builtin ? 'verified' : 'unsigned', trustStatus: builtin ? 'verified' : 'untrusted', enabled: builtin, installedAt: Date.now() }
+  plugin.manifestHash = pluginManifestHash(plugin)
   const index = installed.findIndex(x => x.id === plugin.id); if (index >= 0) installed[index] = plugin; else installed.push(plugin)
   writeJson(PLUGINS_FILE, installed)
-  if (Array.isArray(plugin.nodes)) for (const node of plugin.nodes) { const list = customNodes(); if (!list.some(x => x.id === node.id)) { list.push({ ...node, enabled: plugin.enabled, pluginId: plugin.id, trustStatus: plugin.trustStatus, provenance: { type: 'plugin', pluginId: plugin.id, publisher: plugin.publisher || 'unknown' } }); writeJson(CUSTOM_NODES_FILE, list) } }
-  appendAudit('plugin_installed', { id: plugin.id, version: plugin.version }); res.json(plugin)
+  if (Array.isArray(plugin.nodes)) for (const node of plugin.nodes) { const list = customNodes(); if (!list.some(x => x.id === node.id)) { list.push({ ...node, enabled: plugin.enabled, pluginId: plugin.id, pluginVersion: plugin.version, manifestHash: plugin.manifestHash, trustStatus: plugin.trustStatus, provenance: { type: 'plugin', pluginId: plugin.id, pluginVersion: plugin.version, manifestHash: plugin.manifestHash, publisher: plugin.publisher || 'unknown' } }); writeJson(CUSTOM_NODES_FILE, list) } }
+  appendAudit('plugin_installed', { id: plugin.id, version: plugin.version, manifestHash: plugin.manifestHash }); res.json(plugin)
 })
-app.post('/api/plugins/:id/review', (req, res) => { const list = readJson(PLUGINS_FILE, []), item = list.find(x => x.id === req.params.id); if (!item) return res.status(404).json({ error: 'plugin not installed' }); if (req.body.decision !== 'approve') return res.status(400).json({ error: 'explicit approve decision required' }); item.trustStatus = 'trusted'; item.reviewedAt = Date.now(); item.reviewedBy = String(req.body.by || 'owner').slice(0, 80); writeJson(PLUGINS_FILE, list); appendAudit('plugin_trust_approved', { id: item.id, by: item.reviewedBy }); res.json(item) })
-app.post('/api/plugins/:id/toggle', (req, res) => { const list = readJson(PLUGINS_FILE, []), item = list.find(x => x.id === req.params.id); if (!item) return res.status(404).json({ error: 'plugin not installed' }); const enable = req.body.enabled !== false; if (enable && !['trusted', 'verified'].includes(item.trustStatus)) return res.status(403).json({ error: 'untrusted plugin must be explicitly reviewed before enabling' }); item.enabled = enable; writeJson(PLUGINS_FILE, list); const nodes = customNodes().map(node => node.pluginId === item.id ? { ...node, enabled: enable } : node); writeJson(CUSTOM_NODES_FILE, nodes); appendAudit('plugin_toggled', { id: item.id, enabled: item.enabled }); res.json(item) })
+app.post('/api/plugins/:id/review', (req, res) => {
+  const list = readJson(PLUGINS_FILE, []), item = list.find(x => x.id === req.params.id)
+  if (!item) return res.status(404).json({ error: 'plugin not installed' })
+  if (req.body.decision !== 'approve') return res.status(400).json({ error: 'explicit approve decision required' })
+  const currentHash = pluginManifestHash(item)
+  if (!/^[a-f0-9]{64}$/.test(String(req.body.expectedManifestHash || '')) || req.body.expectedManifestHash !== item.manifestHash || currentHash !== item.manifestHash) return res.status(409).json({ error: 'plugin manifest changed or exact review binding is missing', code: 'STALE_PLUGIN_REVIEW' })
+  item.trustStatus = 'trusted'; item.reviewedAt = Date.now(); item.reviewedBy = String(req.body.by || 'owner').slice(0, 80); item.reviewReceipt = pluginReviewReceipt({ plugin: item, reviewedBy: item.reviewedBy, reviewedAt: item.reviewedAt })
+  writeJson(PLUGINS_FILE, list)
+  const nodes = customNodes().map(node => node.pluginId === item.id ? { ...node, trustStatus: 'trusted', manifestHash: item.manifestHash, provenance: { ...(node.provenance || {}), pluginVersion: item.version, manifestHash: item.manifestHash, reviewReceiptHash: item.reviewReceipt.receiptHash } } : node)
+  writeJson(CUSTOM_NODES_FILE, nodes); appendAudit('plugin_trust_approved', { id: item.id, version: item.version, manifestHash: item.manifestHash, receiptHash: item.reviewReceipt.receiptHash, by: item.reviewedBy }); res.json(item)
+})
+app.post('/api/plugins/:id/toggle', (req, res) => { const list = readJson(PLUGINS_FILE, []), item = list.find(x => x.id === req.params.id); if (!item) return res.status(404).json({ error: 'plugin not installed' }); const enable = req.body.enabled !== false; const exactReview = item.trustStatus === 'verified' || (item.trustStatus === 'trusted' && item.reviewReceipt?.manifestHash === item.manifestHash && pluginManifestHash(item) === item.manifestHash); if (enable && !exactReview) return res.status(403).json({ error: 'plugin requires an exact manifest-bound review before enabling' }); item.enabled = enable; writeJson(PLUGINS_FILE, list); const nodes = customNodes().map(node => node.pluginId === item.id ? { ...node, enabled: enable } : node); writeJson(CUSTOM_NODES_FILE, nodes); appendAudit('plugin_toggled', { id: item.id, version: item.version, manifestHash: item.manifestHash, enabled: item.enabled }); res.json(item) })
 app.delete('/api/plugins/:id', (req, res) => { writeJson(PLUGINS_FILE, readJson(PLUGINS_FILE, []).filter(x => x.id !== req.params.id)); writeJson(CUSTOM_NODES_FILE, customNodes().filter(node => node.pluginId !== req.params.id)); appendAudit('plugin_uninstalled', { id: req.params.id }); res.json({ ok: true }) })
 
 app.get('/api/evaluations', (_req, res) => res.json(readJson(EVALUATIONS_FILE, [])))

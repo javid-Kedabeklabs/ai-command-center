@@ -155,6 +155,18 @@ test('workflow governance advances only through exact immutable candidate eviden
   await panel.getByRole('button', { name: 'Prepare immutable candidate' }).click()
   await expect(panel).toContainText('DEVELOPMENT CANDIDATE')
 
+  const candidatesResponse = await page.request.get(`/api/workflows/${workflowId}/candidates`)
+  const [candidate] = await candidatesResponse.json()
+  const candidateRunResponse = await page.request.post(`/api/workflows/${workflowId}/run`, { data: { input: 'candidate-evidence-output', candidateId: candidate.id, workflowVersion: candidate.workflowVersion } })
+  const { runId: candidateRunId } = await candidateRunResponse.json()
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${candidateRunId}/detail`)
+    return (await response.json()).status
+  }).toBe('done')
+  const suiteId = `browser-gate-${suffix}`
+  const suiteResponse = await page.request.post('/api/evaluations', { data: { id: suiteId, name: `Browser gate ${suffix}`, workflowId, checks: [{ id: 'contains-output', type: 'contains', value: 'candidate-evidence-output' }] } })
+  expect(suiteResponse.ok(), await suiteResponse.text()).toBeTruthy()
+
   page.on('dialog', dialog => dialog.accept())
   await panel.getByRole('button', { name: 'Prepare exact Testing candidate' }).click()
   await expect(panel).toContainText('State: testing-candidate')
@@ -172,4 +184,53 @@ test('workflow governance advances only through exact immutable candidate eviden
   const report = await new AxeBuilder({ page }).include('[data-testid="workflow-governance"]').analyze()
   const blocking = report.violations.filter(item => item.impact === 'serious' || item.impact === 'critical')
   expect(blocking, blocking.map(item => `${item.id}: ${item.help}`).join('\n')).toEqual([])
+
+  await page.getByRole('button', { name: /Advanced Tools/ }).click()
+  await page.getByRole('button', { name: /Evaluation Lab$/ }).click()
+  await page.getByLabel('Workflow', { exact: true }).selectOption(workflowId)
+  await page.getByLabel('Attach evaluation to an exact workflow run').selectOption(candidateRunId)
+  await expect(page.getByTestId('evaluation-run-evidence')).toContainText('Exact candidate evidence')
+  const suiteCard = page.locator('.eval-suite').filter({ hasText: `Browser gate ${suffix}` })
+  await suiteCard.getByRole('button', { name: 'Run evaluation' }).click()
+  await expect(suiteCard).toContainText('Promotable receipt')
+
+  const runList = await (await page.request.get('/api/runs')).json()
+  const safeSummary = runList.find((item: any) => item.id === candidateRunId)
+  expect(safeSummary).toMatchObject({ workflowId, workflowVersion: candidate.workflowVersion, candidateId: candidate.id, environment: 'development' })
+  expect(safeSummary).not.toHaveProperty('dir')
+})
+
+test('imported plugins require an exact manifest-bound review receipt', async ({ page }) => {
+  const suffix = Date.now().toString(36)
+  const pluginId = `browser-plugin-${suffix}`
+  const installResponse = await page.request.post('/api/plugins/install', { data: { plugin: {
+    id: pluginId,
+    name: `Browser plugin ${suffix}`,
+    version: '1.0.0',
+    publisher: 'Browser acceptance fixture',
+    license: 'MIT',
+    permissions: [],
+    dependencies: [],
+    nodes: [],
+  } } })
+  const installed = await installResponse.json()
+  expect(installed.trustStatus).toBe('untrusted')
+  expect(installed.enabled).toBe(false)
+  expect(installed.manifestHash).toMatch(/^[a-f0-9]{64}$/)
+
+  const staleReview = await page.request.post(`/api/plugins/${pluginId}/review`, { data: { decision: 'approve', by: 'browser-test', expectedManifestHash: '0'.repeat(64) } })
+  expect(staleReview.status()).toBe(409)
+  const reviewResponse = await page.request.post(`/api/plugins/${pluginId}/review`, { data: { decision: 'approve', by: 'browser-test', expectedManifestHash: installed.manifestHash } })
+  const reviewed = await reviewResponse.json()
+  expect(reviewed.reviewReceipt.manifestHash).toBe(installed.manifestHash)
+  expect(reviewed.reviewReceipt.receiptHash).toMatch(/^[a-f0-9]{64}$/)
+
+  await page.getByRole('button', { name: /Advanced Tools/ }).click()
+  await page.getByRole('button', { name: /Extensions$/ }).click()
+  const card = page.locator(`[data-plugin-id="${pluginId}"]`)
+  await expect(card).toContainText('trusted')
+  await expect(card).toContainText('Review receipt')
+  await expect(card).toContainText('browser-test')
+
+  await page.request.delete(`/api/plugins/${pluginId}`)
 })

@@ -2,10 +2,10 @@
 
 ## Iteration identity
 
-- Timestamp: 2026-07-14T00:06:00Z
+- Timestamp: 2026-07-14T00:13:40Z
 - Phase: critical runtime durability
 - Base commit: `519fafd` (`Prioritize the full delivery portfolio`)
-- Task: expose the exact immutable governance lifecycle in Workflow Studio and prove it against the live backend
+- Task: bind evaluations and plugin trust to exact immutable evidence and remove private run paths from summary APIs
 - Commits through prior checkpoint: `9ab9403`, `c38154e`, `6c6c715`, `7e907f1`, `8a05cc4`, `949484b`, `789cdf8`, `f150cc8`
 
 ## Completed
@@ -34,6 +34,10 @@
 - Added typed lifecycle, immutable-candidate, approval, deployment, and rollback clients. Candidate-bound runs now carry the exact candidate and workflow-version identity needed for promotable evaluation evidence.
 - Added a Workflow Studio governance panel that derives permitted actions from the persisted lifecycle state, displays exact candidate/version/hash evidence, reports required evaluation receipts, and submits fully bound Development → Testing → Production or rollback requests rather than mutable promotion commands.
 - Added a live-backed browser lifecycle journey proving immutable candidate creation, exact Testing preparation, approval, single-use entry, and persisted approval evidence.
+- Replaced private run-directory disclosure in `/api/runs` with safe workflow, version, candidate, and environment identities required by Evaluation Lab.
+- Evaluation Lab now filters runs by the selected workflow, distinguishes candidate-bound promotable evidence from diagnostic/sample checks, prevents cross-workflow evaluation submission, and displays exact candidate/version receipts.
+- Imported plugins now receive a canonical manifest hash. Review requires that exact hash, stale review attempts fail closed, approval produces an immutable receipt, contributed nodes inherit manifest/version/review provenance, and enablement revalidates the receipt against the current manifest.
+- Added isolated live-browser proof for promotable candidate evaluation evidence and exact manifest-bound plugin review, including stale-review rejection and receipt display.
 - Committed the product journey at `8d231e0` and published sanitized public review snapshot `a6232e9` on `review/current-20260713`; unauthenticated `git ls-remote` confirms it is public.
 - Reloaded the committed implementation through host request `host-5c3fe066d0712a55`; its HTTP 200 health postcondition and receipt SHA-256 `1cd8aa0b89c7ea1c76bfbbd2c4d67bcafe2c126805b08faf1eb6356e2e682be8` passed.
 
@@ -46,9 +50,9 @@
 - Trigger store/idempotency: 17/17.
 - Safe filesystem boundary: 6/6.
 - Phase 0 contract: 37/37 on isolated state.
-- Browser Playwright suite: 5/5, including the live save/version/run/approve/evidence and exact governance journeys.
+- Browser Playwright suite: 6/6, including live safe evidence, exact governance/evaluation, and manifest-bound plugin review journeys.
 - Safe evidence canary: 1/1 across durable data, artifacts, detail/evidence APIs, audit, and bundle export; redaction transforms: 11/11.
-- Unified release verification passed all 12 gates with receipt SHA-256 `f4e20ddb9899c1f9ce3b245caec5657521cf7d08a52544cb72c86c94cd50cb81`.
+- Unified release verification passed all 12 gates with receipt SHA-256 `0b6ae583d13d00fa1b3db01765504ced30f3afdc4ca8ae9219aa13d01a99f7ce`.
 - Smoke: 30/30 on isolated state.
 - TypeScript and production build: passed.
 - Staged and public-snapshot Gitleaks scans: passed.
@@ -69,6 +73,6 @@
 
 ## Next
 
-- Complete exact-candidate evaluation selection and reviewed-plugin evidence UX against the now-visible lifecycle contract.
+- Complete truthful Company World state and the packaging/backup/restore/upgrade/rollback release contract.
 - Make Company World render only authoritative persisted checkpoint/control states.
 - Complete packaging inventory, backup/restore rehearsal, upgrade/rollback receipts, and the remaining hardening audit.

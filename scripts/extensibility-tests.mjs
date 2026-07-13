@@ -22,14 +22,17 @@ await test('disabled custom definitions are rejected at runtime', async () => {
 })
 
 const pluginNode = { id: 'plugin-transform-fixture', name: 'Plugin transform', description: 'Fixture', inputs: [{ id: 'input', label: 'Input', type: 'any' }], outputs: [{ id: 'output', label: 'Output', type: 'any' }], permissions: [], implementation: { kind: 'transform', mode: 'select', selector: '' }, version: 1 }
+let installedPlugin
 await test('untrusted contributed node cannot execute before explicit review', async () => {
-  const installed = await request('/api/plugins/install', { method: 'POST', ...json({ plugin: { id: 'extensibility-fixture', name: 'Extensibility fixture', version: '1.0.0', publisher: 'Tests', license: 'MIT', permissions: [], nodes: [pluginNode] } }) }); if (installed.body.enabled || installed.body.trustStatus !== 'untrusted') throw new Error(JSON.stringify(installed.body))
+  const installed = await request('/api/plugins/install', { method: 'POST', ...json({ plugin: { id: 'extensibility-fixture', name: 'Extensibility fixture', version: '1.0.0', publisher: 'Tests', license: 'MIT', permissions: [], nodes: [pluginNode] } }) }); installedPlugin = installed.body; if (installed.body.enabled || installed.body.trustStatus !== 'untrusted' || !/^[a-f0-9]{64}$/.test(installed.body.manifestHash || '')) throw new Error(JSON.stringify(installed.body))
   await request('/api/workflows', { method: 'POST', ...json(customWorkflow('plugin-runtime-fixture', pluginNode.id)) })
   const run = await execute('plugin-runtime-fixture'); if (run.status !== 'failed' || !run.events.some(event => /disabled custom node|untrusted or disabled plugin/.test(event.text))) throw new Error(JSON.stringify(run))
 })
 
 await test('review and enable propagates to contributed nodes and permits execution', async () => {
-  await request('/api/plugins/extensibility-fixture/review', { method: 'POST', ...json({ decision: 'approve', by: 'test' }) }); const enabled = await request('/api/plugins/extensibility-fixture/toggle', { method: 'POST', ...json({ enabled: true }) }); if (!enabled.body.enabled) throw new Error(JSON.stringify(enabled.body))
+  const stale = await request('/api/plugins/extensibility-fixture/review', { method: 'POST', ...json({ decision: 'approve', by: 'test', expectedManifestHash: '0'.repeat(64) }) }); if (stale.response.status !== 409) throw new Error(JSON.stringify(stale.body))
+  const reviewed = await request('/api/plugins/extensibility-fixture/review', { method: 'POST', ...json({ decision: 'approve', by: 'test', expectedManifestHash: installedPlugin.manifestHash }) }); if (reviewed.body.reviewReceipt?.manifestHash !== installedPlugin.manifestHash) throw new Error(JSON.stringify(reviewed.body))
+  const enabled = await request('/api/plugins/extensibility-fixture/toggle', { method: 'POST', ...json({ enabled: true }) }); if (!enabled.body.enabled) throw new Error(JSON.stringify(enabled.body))
   const run = await execute('plugin-runtime-fixture', '"trusted-output"'); if (run.status !== 'done' || !String(run.result).includes('trusted-output')) throw new Error(JSON.stringify(run))
 })
 

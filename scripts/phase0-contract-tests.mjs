@@ -73,7 +73,7 @@ const plugin = await request('/api/plugins/install', { method: 'POST', ...json({
 check(plugin.response.ok && plugin.body.enabled === false && plugin.body.trustStatus === 'untrusted', 'imported plugin installs disabled and untrusted')
 const refusedEnable = await request('/api/plugins/phase0-fixture-plugin/toggle', { method: 'POST', ...json({ enabled: true }) })
 check(refusedEnable.response.status === 403, 'untrusted plugin cannot be enabled before review')
-const reviewed = await request('/api/plugins/phase0-fixture-plugin/review', { method: 'POST', ...json({ decision: 'approve', by: 'phase0-test' }) })
+const reviewed = await request('/api/plugins/phase0-fixture-plugin/review', { method: 'POST', ...json({ decision: 'approve', by: 'phase0-test', expectedManifestHash: plugin.body.manifestHash }) })
 const enabledPlugin = await request('/api/plugins/phase0-fixture-plugin/toggle', { method: 'POST', ...json({ enabled: true }) })
 check(reviewed.response.ok && enabledPlugin.body.enabled, 'reviewed plugin can be explicitly enabled')
 const toggled = await request('/api/plugins/phase0-fixture-plugin/toggle', { method: 'POST', ...json({ enabled: false }) })
