@@ -23,7 +23,7 @@ export default defineConfig({
     video: 'off',
   },
   webServer: {
-    command: `npm run build && PORT=${port} ACC_DATA_DIR=.tmp/playwright-data node server/index.js`,
+    command: `npm run build && PORT=${port} ACC_DATA_DIR=.tmp/playwright-data ACC_BRAIN_DIR=.tmp/playwright-brain ACC_SKIP_AGENT_MIRROR=1 node server/index.js`,
     url: `http://127.0.0.1:${port}/api/system`,
     timeout: 60_000,
     reuseExistingServer: false,

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { migrateWorkflowDocument } from '../workflows/schema.js'
 import { saveWorkflowVersion } from '../workflows/versions.js'
 import { assertWorkflowMutable } from '../governance/mutations.js'
+import { effectiveWorkflowPermissions } from '../runtime/subworkflow-context.js'
 
 const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null } }
 
@@ -77,7 +78,7 @@ export function createWorkflowTriggerAdapter({ workflowDir, versionDir }) {
     const workflow = read(path.join(workflowDir, `${trigger.workflowId}.json`))
     if (!workflow) throw Object.assign(new Error('workflow not found'), { code: 'WORKFLOW_NOT_FOUND' })
     const normalized = migrateWorkflowDocument(workflow)
-    if (normalized.permissions?.['read-files'] === false) throw Object.assign(new Error('workflow permission read-files denies folder triggers'), { code: 'FOLDER_PERMISSION_DENIED' })
+    if (effectiveWorkflowPermissions(normalized)['read-files'] === false) throw Object.assign(new Error('effective workflow permission read-files denies folder triggers'), { code: 'FOLDER_PERMISSION_DENIED' })
     return true
   }
 
@@ -85,7 +86,7 @@ export function createWorkflowTriggerAdapter({ workflowDir, versionDir }) {
     const workflow = read(path.join(workflowDir, `${trigger.workflowId}.json`))
     if (!workflow) throw Object.assign(new Error('workflow not found'), { code: 'WORKFLOW_NOT_FOUND' })
     const normalized = migrateWorkflowDocument(workflow)
-    if (operation !== 'revoke' && normalized.permissions?.['receive-webhooks'] === false) throw Object.assign(new Error('workflow permission receive-webhooks denies webhook access'), { code: 'WEBHOOK_PERMISSION_DENIED' })
+    if (operation !== 'revoke' && effectiveWorkflowPermissions(normalized)['receive-webhooks'] === false) throw Object.assign(new Error('effective workflow permission receive-webhooks denies webhook access'), { code: 'WEBHOOK_PERMISSION_DENIED' })
     return true
   }
 

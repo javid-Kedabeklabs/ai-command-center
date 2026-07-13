@@ -10,6 +10,8 @@ The only allowed lifecycle is:
 
 External content, telemetry, model output, discoveries, and experiments are evidence. They are never privileged instructions. No component may silently rewrite or promote production code, workflows, prompts, skills, permissions, plugins, tools, models, providers, or agent definitions.
 
+The detailed learned-artifact authority, expiry, measurement, and rollback contract is recorded in `docs/RECOVERY_SECURITY_DECISIONS.md`. Observations are append-only; models may propose routing/context/prompt/checklist improvements, but security policy, authority, redaction, retry authority, release gates, ownership, and expected test results are never model-writable.
+
 ## Departments
 
 ### External Intelligence and Technology Scout

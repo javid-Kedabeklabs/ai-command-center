@@ -9,6 +9,10 @@ export const WORKFLOW_CAPABILITIES = Object.freeze([
   'write-files',
   'network',
   'tools',
+  'install-packages',
+  'receive-webhooks',
+  'external-publish',
+  'destructive',
 ])
 
 const plain = value => value && typeof value === 'object' && !Array.isArray(value)
@@ -26,6 +30,21 @@ export function intersectPermissionCeilings(...policies) {
     if (policies.some(policy => plain(policy) && policy[capability] === false)) result[capability] = false
   }
   return result
+}
+
+export function environmentPermissionCeiling(environment, workflowPermissions = {}) {
+  const normalized = String(environment || 'development').trim().toLowerCase()
+  if (normalized === 'development') return {}
+  if (!['testing', 'production'].includes(normalized)) return Object.fromEntries(WORKFLOW_CAPABILITIES.map(capability => [capability, false]))
+  return Object.fromEntries(WORKFLOW_CAPABILITIES.filter(capability => workflowPermissions?.[capability] !== true).map(capability => [capability, false]))
+}
+
+export function effectiveWorkflowPermissions(workflow, inheritedPermissions = {}) {
+  return intersectPermissionCeilings(
+    environmentPermissionCeiling(workflow?.environment, workflow?.permissions),
+    inheritedPermissions,
+    workflow?.permissions,
+  )
 }
 
 export function intersectResourceCeilings(...policies) {
@@ -54,7 +73,7 @@ export function effectiveExecutionContext({ inherited, workflow, runId = null } 
   const parent = parseInheritedExecutionContext(inherited)
   return {
     resources: intersectResourceCeilings(parent.resources, workflow?.settings?.resources),
-    permissions: intersectPermissionCeilings(parent.permissions, workflow?.permissions),
+    permissions: effectiveWorkflowPermissions(workflow, parent.permissions),
     localOnly: parent.localOnly || workflow?.settings?.localOnly === true,
     stack: [...parent.stack],
     depth: parent.stack.length,

@@ -4,6 +4,8 @@ import {
   effectiveExecutionContext,
   executionContextFromEvidence,
   executionPolicyEvidence,
+  environmentPermissionCeiling,
+  effectiveWorkflowPermissions,
   intersectPermissionCeilings,
   intersectResourceCeilings,
   MAX_SUBWORKFLOW_DEPTH,
@@ -31,6 +33,23 @@ await test('permission denials cannot be restored by a child workflow or node', 
     { network: false, tools: false },
     { network: true, tools: true, 'execute-shell': false },
   ), { network: false, tools: false, 'execute-shell': false })
+})
+
+await test('Testing and Production require explicit reviewed capability grants', () => {
+  const testing = environmentPermissionCeiling('testing', { network: true, 'read-files': true })
+  assert.equal(testing.network, undefined)
+  assert.equal(testing['read-files'], undefined)
+  assert.equal(testing['execute-shell'], false)
+  assert.equal(testing['install-packages'], false)
+  const production = effectiveWorkflowPermissions({ environment: 'production', permissions: { network: true, tools: true } }, { network: false })
+  assert.equal(production.network, false)
+  assert.equal(production.tools, undefined)
+  assert.equal(production['execute-code'], false)
+})
+
+await test('unknown environments fail closed while Development remains compatible', () => {
+  assert.equal(environmentPermissionCeiling('development').network, undefined)
+  assert.equal(environmentPermissionCeiling('future-environment').network, false)
 })
 
 await test('child context inherits local-only policy, cancellation identity, stack, and node ceilings', () => {

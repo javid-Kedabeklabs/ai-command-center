@@ -17,7 +17,7 @@ import { exportComponentManifest, installComponentManifest, validateComponentMan
 import { runDependencyGraph } from './runtime/scheduler.js'
 import { ResourceCoordinator, nodeResourceLimit, normalizeResourcePolicy, resourcePolicyErrors } from './runtime/resources.js'
 import { GlobalModelCoordinator, explicitModelBytes, globalModelPolicyFromEnv } from './runtime/global-model-resources.js'
-import { childExecutionContext, effectiveExecutionContext, executionContextFromEvidence, executionPolicyEvidence, MAX_SUBWORKFLOW_DEPTH, parseInheritedExecutionContext } from './runtime/subworkflow-context.js'
+import { childExecutionContext, effectiveExecutionContext, executionContextFromEvidence, executionPolicyEvidence, MAX_SUBWORKFLOW_DEPTH, parseInheritedExecutionContext, WORKFLOW_CAPABILITIES } from './runtime/subworkflow-context.js'
 import { createTriggerService } from './triggers/service.js'
 import { findTriggerRun, normalizeTriggerContext } from './triggers/run-idempotency.js'
 import { createWorkflowTriggerAdapter } from './triggers/workflow-adapter.js'
@@ -37,6 +37,7 @@ import { assertExactEvaluationEvidence, createEvaluationRecord, normalizeEvaluat
 import { applyLifecycleTransition, createLifecycleStore, migrateGovernanceLifecycle } from './governance/lifecycle.js'
 import { createLocalRequestGuard, requireMutationIntent } from './security/local-request-guard.js'
 import { createRedactor } from './security/redaction.js'
+import { readFileBeneath, resolvePathBeneath, unlinkFileBeneath, writeFileBeneath } from './security/safe-files.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -62,6 +63,9 @@ const governanceCandidates = createCandidateStore({ file: GOVERNANCE_CANDIDATES_
 const governanceLifecycle = createLifecycleStore({ file: GOVERNANCE_LIFECYCLE_FILE })
 
 const HOME = os.homedir()
+const requestedBrain = process.env.ACC_BRAIN_DIR ? path.resolve(ROOT, process.env.ACC_BRAIN_DIR) : path.join(HOME, 'AgentBrain')
+if (process.env.ACC_BRAIN_DIR && requestedBrain !== ROOT && !requestedBrain.startsWith(`${ROOT}${path.sep}`)) throw new Error('ACC_BRAIN_DIR must resolve inside the repository worktree')
+const BRAIN_DIR = requestedBrain
 const LMS = path.join(HOME, '.lmstudio', 'bin', 'lms')
 const OPENCODE = '/opt/homebrew/bin/opencode'
 const LMSTUDIO = 'http://localhost:1234'
@@ -149,7 +153,7 @@ function writeOcAgent(agent) {
   let skillsBlock = ''
   if (Array.isArray(agent.skills) && agent.skills.length) {
     const parts = []
-    for (const rel of agent.skills) { try { parts.push(fs.readFileSync(path.join(HOME, 'AgentBrain', rel), 'utf8')) } catch {} }
+    for (const rel of agent.skills) { try { parts.push(readFileBeneath(BRAIN_DIR, rel, 'utf8')) } catch {} }
     if (parts.length) skillsBlock = '\n\n## Skills you have (follow these playbooks when relevant)\n\n' + parts.join('\n\n---\n\n')
   }
   const md = `---
@@ -542,7 +546,7 @@ app.get('/api/runs/:id/detail', (req, res) => {
   else { try { rec = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, req.params.id + '.json'), 'utf8')) } catch { return res.status(404).json({ error: 'not found' }) } }
   // list artifact files in the run's working dir
   let artifacts = []
-  if (rec.dir) { try { artifacts = fs.readdirSync(rec.dir).filter(f => !f.startsWith('.')).map(f => { const st = fs.statSync(path.join(rec.dir, f)); return { name: f, size: st.size, isDir: st.isDirectory() } }) } catch {} }
+  if (rec.dir) { try { artifacts = fs.readdirSync(rec.dir, { withFileTypes: true }).filter(entry => !entry.name.startsWith('.') && !entry.isSymbolicLink()).map(entry => { const st = fs.lstatSync(path.join(rec.dir, entry.name)); return { name: entry.name, size: st.size, isDir: st.isDirectory() } }) } catch {} }
   res.json({ ...rec, artifacts })
 })
 // read a single artifact file's text (path-guarded to run dirs)
@@ -550,9 +554,8 @@ app.get('/api/runs/:id/artifact', (req, res) => {
   let rec = runs.get(req.params.id); if (rec) { const { listeners, proc, ...r } = rec; rec = r }
   else { try { rec = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, req.params.id + '.json'), 'utf8')) } catch { return res.status(404).end() } }
   if (!rec.dir) return res.status(404).end()
-  const abs = path.resolve(rec.dir, req.query.name || '')
-  if (!abs.startsWith(path.resolve(rec.dir) + path.sep)) return res.status(400).end()
-  try { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); res.send(redactReleaseValue(fs.readFileSync(abs, 'utf8'))) } catch { res.status(404).end() }
+  try { res.setHeader('Content-Type', 'text/plain; charset=utf-8'); res.send(redactReleaseValue(readFileBeneath(rec.dir, req.query.name, 'utf8'))) }
+  catch (error) { res.status(error?.code === 'UNSAFE_FILESYSTEM_PATH' ? 400 : 404).end() }
 })
 
 function runSummary(id, r) {
@@ -587,9 +590,9 @@ app.get('/api/artifacts', (_req, res) => {
     let r; try { r = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, f), 'utf8')) } catch { continue }
     if (!r.dir) continue
     let entries = []
-    try { entries = fs.readdirSync(r.dir).filter(x => !x.startsWith('.') && !fs.statSync(path.join(r.dir, x)).isDirectory()) } catch {}
+    try { entries = fs.readdirSync(r.dir, { withFileTypes: true }).filter(entry => !entry.name.startsWith('.') && !entry.isSymbolicLink() && entry.isFile()).map(entry => entry.name) } catch {}
     for (const name of entries) {
-      const st = fs.statSync(path.join(r.dir, name))
+      const st = fs.lstatSync(path.join(r.dir, name))
       arts.push({ runId: r.id || f.replace(/\.json$/, ''), name, size: st.size, mtime: st.mtimeMs,
         source: r.workflowName || r.agentName || 'Run', type: r.type || 'run', status: r.status })
     }
@@ -891,24 +894,21 @@ app.get('/api/studio/gallery', (_req, res) => {
 })
 
 // ---------- brain (AgentBrain vault) ----------
-const BRAIN_DIR = path.join(HOME, 'AgentBrain')
 fs.mkdirSync(BRAIN_DIR, { recursive: true })
 
 // resolve a client-supplied relative path safely inside the vault; .md only
-function brainPath(rel) {
+function brainPath(rel, { allowMissing = false } = {}) {
   if (!rel || typeof rel !== 'string' || !rel.endsWith('.md')) return null
-  const abs = path.resolve(BRAIN_DIR, rel)
-  if (abs !== BRAIN_DIR && !abs.startsWith(BRAIN_DIR + path.sep)) return null
-  return abs
+  try { return resolvePathBeneath(BRAIN_DIR, rel, { allowMissing }).path } catch { return null }
 }
 function walkBrain(dir, base = '') {
   const out = []
   for (const ent of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-    if (ent.name.startsWith('.')) continue
+    if (ent.name.startsWith('.') || ent.isSymbolicLink()) continue
     const rel = base ? `${base}/${ent.name}` : ent.name
     if (ent.isDirectory()) out.push(...walkBrain(path.join(dir, ent.name), rel))
     else if (ent.name.endsWith('.md')) {
-      const st = fs.statSync(path.join(dir, ent.name))
+      const st = fs.lstatSync(path.join(dir, ent.name))
       out.push({ path: rel, section: base.split('/')[0] || '', name: ent.name.replace(/\.md$/, ''), size: st.size, mtime: st.mtimeMs })
     }
   }
@@ -920,22 +920,22 @@ app.get('/api/brain/tree', (_req, res) => res.json(walkBrain(BRAIN_DIR)))
 app.get('/api/brain/file', (req, res) => {
   const abs = brainPath(req.query.path)
   if (!abs) return res.status(400).json({ error: 'invalid path' })
-  try { res.json({ path: req.query.path, content: fs.readFileSync(abs, 'utf8') }) }
+  try { res.json({ path: req.query.path, content: readFileBeneath(BRAIN_DIR, req.query.path, 'utf8') }) }
   catch { res.status(404).json({ error: 'not found' }) }
 })
 
 app.post('/api/brain/file', (req, res) => {
-  const abs = brainPath(req.body.path)
+  const abs = brainPath(req.body.path, { allowMissing: true })
   if (!abs) return res.status(400).json({ error: 'invalid path' })
-  fs.mkdirSync(path.dirname(abs), { recursive: true })
-  fs.writeFileSync(abs, req.body.content ?? '')
+  try { writeFileBeneath(BRAIN_DIR, req.body.path, req.body.content ?? '') }
+  catch { return res.status(400).json({ error: 'invalid path' }) }
   res.json({ ok: true })
 })
 
 app.delete('/api/brain/file', (req, res) => {
   const abs = brainPath(req.query.path)
   if (!abs) return res.status(400).json({ error: 'invalid path' })
-  try { fs.unlinkSync(abs); res.json({ ok: true }) } catch { res.status(404).json({ error: 'not found' }) }
+  try { unlinkFileBeneath(BRAIN_DIR, req.query.path); res.json({ ok: true }) } catch { res.status(404).json({ error: 'not found' }) }
 })
 
 // nodes = files, links = [[wikilink]] mentions (matched by file name, case-insensitive)
@@ -1432,10 +1432,13 @@ app.post('/api/custom-nodes', (req, res) => {
   const id = safeSlug(body.id || body.name, 'custom-node')
   const implementation = body.implementation || {}
   if (!['agent', 'python', 'shell', 'http', 'mcp', 'transform'].includes(implementation.kind)) return res.status(400).json({ error: 'implementation kind must be agent, python, shell, http, mcp, or transform' })
+  const requestedPermissions = Array.isArray(body.permissions) ? [...new Set(body.permissions.map(String))].slice(0, 20) : []
+  const unknownPermission = requestedPermissions.find(capability => !WORKFLOW_CAPABILITIES.includes(capability))
+  if (unknownPermission) return res.status(400).json({ error: `unsupported custom-node capability: ${unknownPermission}` })
   const normalizePorts = value => (Array.isArray(value) ? value : []).slice(0, 12).map((x, i) => ({ id: safeSlug(x.id || x.name, `port-${i + 1}`), label: String(x.label || x.name || `Port ${i + 1}`).slice(0, 80), type: PORT_TYPES.includes(x.type) ? x.type : 'any', required: x.required !== false, ...(x.schema && typeof x.schema === 'object' ? { schema: x.schema } : {}) }))
   const previous = list.find(x => x.id === id)
   const priorSnapshot = previous ? { version: previous.version, savedAt: Date.now(), definition: Object.fromEntries(Object.entries(previous).filter(([key]) => key !== 'versions')) } : null
-  const item = { id, name: String(body.name || id).slice(0, 100), icon: String(body.icon || '◇').slice(0, 8), description: String(body.description || '').slice(0, 500), inputs: normalizePorts(body.inputs).length ? normalizePorts(body.inputs) : [p('input', 'any', 'Input')], outputs: normalizePorts(body.outputs).length ? normalizePorts(body.outputs) : [p('output', 'any', 'Output')], permissions: Array.isArray(body.permissions) ? body.permissions.map(String).slice(0, 20) : [], implementation, tests: Array.isArray(body.tests) ? body.tests.slice(0, 20) : [], documentation: String(body.documentation || '').slice(0, 10000), version: Number(body.version) || Number(previous?.version || 0) + 1, enabled: body.enabled !== false, trustStatus: body.trustStatus || previous?.trustStatus || 'trusted-local', provenance: body.provenance || previous?.provenance || { type: 'local', createdBy: 'owner' }, versions: [...(priorSnapshot ? [priorSnapshot] : []), ...(previous?.versions || [])].slice(0, 20), installedAt: previous?.installedAt || Date.now(), updatedAt: Date.now() }
+  const item = { id, name: String(body.name || id).slice(0, 100), icon: String(body.icon || '◇').slice(0, 8), description: String(body.description || '').slice(0, 500), inputs: normalizePorts(body.inputs).length ? normalizePorts(body.inputs) : [p('input', 'any', 'Input')], outputs: normalizePorts(body.outputs).length ? normalizePorts(body.outputs) : [p('output', 'any', 'Output')], permissions: requestedPermissions, implementation, tests: Array.isArray(body.tests) ? body.tests.slice(0, 20) : [], documentation: String(body.documentation || '').slice(0, 10000), version: Number(body.version) || Number(previous?.version || 0) + 1, enabled: body.enabled !== false, trustStatus: body.trustStatus || previous?.trustStatus || 'trusted-local', provenance: body.provenance || previous?.provenance || { type: 'local', createdBy: 'owner' }, versions: [...(priorSnapshot ? [priorSnapshot] : []), ...(previous?.versions || [])].slice(0, 20), installedAt: previous?.installedAt || Date.now(), updatedAt: Date.now() }
   const index = list.findIndex(x => x.id === id); if (index >= 0) list[index] = item; else list.push(item)
   writeJson(CUSTOM_NODES_FILE, list); appendAudit('custom_node_saved', { id, kind: implementation.kind }); res.json(item)
 })
@@ -1454,7 +1457,10 @@ app.post('/api/plugins/install', (req, res) => {
   if (!source || !/^[a-z0-9_-]+$/i.test(source.id || '')) return res.status(400).json({ error: 'valid plugin bundle or marketplace id required' })
   if (!source.version || !source.name) return res.status(400).json({ error: 'plugin manifest requires name and version' })
   const builtin = BUILTIN_MARKETPLACE.some(item => item.id === source.id && item.verified)
-  const installed = readJson(PLUGINS_FILE, []), plugin = { ...source, permissions: Array.isArray(source.permissions) ? source.permissions.map(String).slice(0, 30) : [], dependencies: Array.isArray(source.dependencies) ? source.dependencies.slice(0, 50) : [], provenance: source.provenance || { source: builtin ? 'builtin-marketplace' : 'imported-bundle' }, signatureStatus: builtin ? 'verified' : 'unsigned', trustStatus: builtin ? 'verified' : 'untrusted', enabled: builtin, installedAt: Date.now() }
+  const requestedPermissions = Array.isArray(source.permissions) ? [...new Set(source.permissions.map(String))].slice(0, 30) : []
+  const unknownPermission = requestedPermissions.find(capability => !WORKFLOW_CAPABILITIES.includes(capability))
+  if (unknownPermission) return res.status(400).json({ error: `unsupported plugin capability: ${unknownPermission}` })
+  const installed = readJson(PLUGINS_FILE, []), plugin = { ...source, permissions: requestedPermissions, dependencies: Array.isArray(source.dependencies) ? source.dependencies.slice(0, 50) : [], provenance: source.provenance || { source: builtin ? 'builtin-marketplace' : 'imported-bundle' }, signatureStatus: builtin ? 'verified' : 'unsigned', trustStatus: builtin ? 'verified' : 'untrusted', enabled: builtin, installedAt: Date.now() }
   const index = installed.findIndex(x => x.id === plugin.id); if (index >= 0) installed[index] = plugin; else installed.push(plugin)
   writeJson(PLUGINS_FILE, installed)
   if (Array.isArray(plugin.nodes)) for (const node of plugin.nodes) { const list = customNodes(); if (!list.some(x => x.id === node.id)) { list.push({ ...node, enabled: plugin.enabled, pluginId: plugin.id, trustStatus: plugin.trustStatus, provenance: { type: 'plugin', pluginId: plugin.id, publisher: plugin.publisher || 'unknown' } }); writeJson(CUSTOM_NODES_FILE, list) } }
@@ -1675,13 +1681,24 @@ async function pythonExecutableFor(nodeData, run, nodeId, cwd) {
   return python
 }
 
-function runPath(cwd, configured, fallback) {
+function runRelativePath(configured, fallback) {
   const raw = String(configured || fallback || '').trim()
   if (!raw) throw new Error('a file path is required')
-  const resolved = path.resolve(cwd, raw)
-  const relative = path.relative(cwd, resolved)
-  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('path must stay inside this run workspace')
-  return resolved
+  return raw
+}
+function externalRegularFile(configured, label = 'input file') {
+  const file = path.resolve(String(configured || '').replace(/^~(?=\/)/, HOME))
+  if (!configured || !fs.existsSync(file)) throw new Error(`${label} not found: ${file}`)
+  const entry = fs.lstatSync(file)
+  if (entry.isSymbolicLink() || !entry.isFile()) throw new Error(`${label} must be a real regular file: ${file}`)
+  return fs.realpathSync(file)
+}
+function externalDirectory(configured, label = 'folder') {
+  const folder = path.resolve(String(configured || '').replace(/^~(?=\/)/, HOME))
+  if (!configured || !fs.existsSync(folder)) throw new Error(`${label} not found: ${folder}`)
+  const entry = fs.lstatSync(folder)
+  if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`${label} must be a real directory: ${folder}`)
+  return fs.realpathSync(folder)
 }
 function isLoopbackUrl(value) {
   try { return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(new URL(value).hostname) } catch { return false }
@@ -1958,10 +1975,15 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         const definition = customNodes().find(x => x.id === node.data?.customNodeId)
         if (!definition) throw new Error(`${node.data?.label || nid} references a custom node that is not installed`)
         if (definition.enabled === false) throw new Error(`${node.data?.label || nid} references a disabled custom node`)
+        let plugin = null
         if (definition.pluginId) {
-          const plugin = readJson(PLUGINS_FILE, []).find(item => item.id === definition.pluginId)
+          plugin = readJson(PLUGINS_FILE, []).find(item => item.id === definition.pluginId)
           if (!plugin?.enabled || !['trusted', 'verified'].includes(plugin.trustStatus)) throw new Error(`${node.data?.label || nid} belongs to an untrusted or disabled plugin`)
         }
+        const requestedCapabilities = [...new Set([...(definition.permissions || []), ...(plugin?.permissions || [])].map(String))]
+        const unsupported = requestedCapabilities.find(capability => !WORKFLOW_CAPABILITIES.includes(capability))
+        if (unsupported) throw new Error(`${node.data?.label || nid} requests unsupported capability ${unsupported}`)
+        for (const capability of requestedCapabilities) requirePermission(node, capability)
         const kind = definition.implementation?.kind === 'transform' ? 'json-transform' : definition.implementation?.kind
         node = { ...node, type: kind, data: { ...(definition.implementation?.config || {}), ...definition.implementation, ...(node.data || {}), customDefinitionId: definition.id } }
       }
@@ -2026,29 +2048,29 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         const skillTexts = []
         for (const rel of d.skills.slice(0, 12)) {
           if (typeof rel !== 'string' || !rel.startsWith(`${SKILLS_REL}/`) || rel.includes('..')) continue
-          try { skillTexts.push(fs.readFileSync(path.join(HOME, 'AgentBrain', rel), 'utf8')) } catch {}
+          try { skillTexts.push(readFileBeneath(BRAIN_DIR, rel, 'utf8')) } catch {}
         }
         if (skillTexts.length) instruction = `Follow these reusable skill playbooks when completing the task:\n\n${skillTexts.join('\n\n---\n\n')}\n\n## Task\n${instruction}`
       }
 
       if (node.type === 'file-input') {
-        const files = inputPaths(d.paths || d.path).map(p => path.resolve(String(p).replace(/^~(?=\/)/, HOME)))
+        requirePermission(node, 'read-files')
+        const files = inputPaths(d.paths || d.path).map(p => externalRegularFile(p))
         if (!files.length) throw new Error(`${d.label || nid} needs at least one configured file`)
-        for (const file of files) if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error(`input file not found: ${file}`)
         outputs[nid] = d.readText ? files.map(file => `--- ${file} ---\n${fs.readFileSync(file, d.encoding || 'utf8')}`).join('\n\n') : JSON.stringify(files, null, 2)
         pushEvent(run, 'done', `✔ ${d.label || nid}: selected ${files.length} file(s)`, nid)
         return
       }
 
       if (node.type === 'folder-input') {
-        const folder = path.resolve(String(d.path || '').replace(/^~(?=\/)/, HOME))
-        if (!d.path || !fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) throw new Error(`${d.label || nid} folder not found: ${folder}`)
+        requirePermission(node, 'read-files')
+        const folder = externalDirectory(d.path, `${d.label || nid} folder`)
         const maxFiles = Math.max(1, Math.min(5000, Number(d.maxFiles) || 500))
         const extensions = String(d.extensions || '').split(',').map(x => x.trim().toLowerCase().replace(/^\./, '')).filter(Boolean)
         const found = []
         const visit = current => {
           for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-            if (found.length >= maxFiles || entry.name.startsWith('.')) continue
+            if (found.length >= maxFiles || entry.name.startsWith('.') || entry.isSymbolicLink()) continue
             const full = path.join(current, entry.name)
             if (entry.isDirectory() && d.recursive) visit(full)
             else if (entry.isFile() && (!extensions.length || extensions.includes(path.extname(entry.name).slice(1).toLowerCase()))) found.push(full)
@@ -2061,11 +2083,11 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       }
 
       if (node.type === 'pdf-reader') {
-        const files = inputPaths(upstream || d.path).map(p => path.resolve(String(p).replace(/^~(?=\/)/, HOME))).filter(p => p.toLowerCase().endsWith('.pdf'))
+        requirePermission(node, 'read-files')
+        const files = inputPaths(upstream || d.path).map(p => externalRegularFile(p, 'PDF')).filter(p => p.toLowerCase().endsWith('.pdf'))
         if (!files.length) throw new Error(`${d.label || nid} received no PDF paths`)
         const chunks = []
         for (const file of files.slice(0, Math.max(1, Math.min(200, Number(d.maxFiles) || 50)))) {
-          if (!fs.existsSync(file)) throw new Error(`PDF not found: ${file}`)
           chunks.push(`--- SOURCE: ${file} ---\n${await extractPdfText(file)}`)
         }
         outputs[nid] = chunks.join('\n\n')
@@ -2074,24 +2096,22 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       }
 
       if (node.type === 'obsidian-read') {
-        const vault = path.resolve(String(d.vaultPath || path.join(HOME, 'AgentBrain')).replace(/^~(?=\/)/, HOME))
+        requirePermission(node, 'read-files')
+        const vault = externalDirectory(d.vaultPath || path.join(HOME, 'AgentBrain'), `${d.label || nid} vault`)
         const note = String(d.notePath || '').replace(/^\/+/, '')
-        const file = path.resolve(vault, note)
-        if (!note || (!file.startsWith(vault + path.sep) && file !== vault)) throw new Error(`${d.label || nid} needs a safe vault-relative note path`)
-        outputs[nid] = fs.readFileSync(file, 'utf8')
+        const file = resolvePathBeneath(vault, note).path
+        outputs[nid] = readFileBeneath(vault, note, 'utf8')
         pushEvent(run, 'done', `✔ ${d.label || nid}: read ${path.relative(vault, file)}`, nid)
         return
       }
 
       if (node.type === 'obsidian-write') {
-        const vault = path.resolve(String(d.vaultPath || path.join(HOME, 'AgentBrain')).replace(/^~(?=\/)/, HOME))
+        requirePermission(node, 'write-files')
+        const vault = externalDirectory(d.vaultPath || path.join(HOME, 'AgentBrain'), `${d.label || nid} vault`)
         let note = fillTemplate(d.notePath || `${wf.name || 'Workflow Result'}.md`).replace(/^\/+/, '')
         if (!path.extname(note)) note += '.md'
-        const file = path.resolve(vault, note)
-        if (!file.startsWith(vault + path.sep)) throw new Error(`${d.label || nid} note path must stay inside the selected vault`)
-        fs.mkdirSync(path.dirname(file), { recursive: true })
         const content = upstream || input || ''
-        if (d.append && fs.existsSync(file)) fs.appendFileSync(file, `\n\n${content}`); else fs.writeFileSync(file, content)
+        const file = writeFileBeneath(vault, note, d.append ? `\n\n${content}` : content, { append: d.append === true })
         outputs[nid] = file
         pushEvent(run, 'done', `✔ ${d.label || nid}: wrote ${path.relative(vault, file)}`, nid)
         return
@@ -2180,10 +2200,10 @@ app.post('/api/workflows/:id/run', async (req, res) => {
 
       if (node.type === 'python') {
         requirePermission(node, 'execute-code')
+        if (Array.isArray(d.dependencies) && d.dependencies.length) requirePermission(node, 'install-packages')
         const code = String(d.code || '').trim()
         if (!code) throw new Error(`${d.label || nid} has no Python code`)
-        const script = runPath(cwd, `.nodes/${nid}.py`)
-        fs.mkdirSync(path.dirname(script), { recursive: true }); fs.writeFileSync(script, code)
+        const script = writeFileBeneath(cwd, `.nodes/${nid}.py`, code)
         pushEvent(run, 'info', `▶ ${d.label || nid} — Python`, nid)
         const payload = JSON.stringify({ input: upstream || input, workflowInput: input, outputs })
         const python = await pythonExecutableFor(d, run, nid, cwd)
@@ -2208,17 +2228,17 @@ app.post('/api/workflows/:id/run', async (req, res) => {
 
       if (node.type === 'read-file') {
         requirePermission(node, 'read-files')
-        const file = runPath(cwd, d.path)
-        outputs[nid] = fs.readFileSync(file, d.encoding || 'utf8')
+        const relative = runRelativePath(d.path)
+        const file = resolvePathBeneath(cwd, relative).path
+        outputs[nid] = readFileBeneath(cwd, relative, d.encoding || 'utf8')
         pushEvent(run, 'done', `✔ ${d.label || nid} read ${path.relative(cwd, file)}`, nid)
         return
       }
 
       if (node.type === 'write-file') {
         requirePermission(node, 'write-files')
-        const file = runPath(cwd, d.path, 'output.txt')
-        fs.mkdirSync(path.dirname(file), { recursive: true })
-        fs.writeFileSync(file, upstream || input || '', d.encoding || 'utf8')
+        const relative = runRelativePath(d.path, 'output.txt')
+        const file = writeFileBeneath(cwd, relative, upstream || input || '', { encoding: d.encoding || 'utf8' })
         outputs[nid] = path.relative(cwd, file)
         pushEvent(run, 'done', `✔ ${d.label || nid} saved ${outputs[nid]}`, nid)
         return
@@ -2610,7 +2630,7 @@ app.post('/api/workflows/testnode', async (req, res) => {
 app.get('/api/bundle/export', (_req, res) => {
   const workflows = fs.readdirSync(WF_DIR).filter(f => f.endsWith('.json')).map(f => { try { return JSON.parse(fs.readFileSync(path.join(WF_DIR, f), 'utf8')) } catch { return null } }).filter(Boolean)
   const brain = {}
-  for (const f of walkBrain(BRAIN_DIR)) { try { brain[f.path] = fs.readFileSync(path.join(BRAIN_DIR, f.path), 'utf8') } catch {} }
+  for (const f of walkBrain(BRAIN_DIR)) { try { brain[f.path] = readFileBeneath(BRAIN_DIR, f.path, 'utf8') } catch {} }
   const bundle = {
     version: 1, exported: new Date().toISOString(),
     agents: loadAgents(),
@@ -2648,7 +2668,7 @@ app.post('/api/bundle/import/:id/decision', (req, res) => {
     const agentIds = new Set(loadAgents().map(agent => agent.id)), conflicts = []
     for (const agent of bundle.agents || []) if (agentIds.has(agent.id)) conflicts.push(`agent ${agent.id}`)
     for (const workflow of bundle.workflows || []) if (fs.existsSync(path.join(WF_DIR, `${workflow.id}.json`))) conflicts.push(`workflow ${workflow.id}`)
-    for (const rel of Object.keys(bundle.brain || {})) { const abs = brainPath(rel); if (abs && fs.existsSync(abs)) conflicts.push(`knowledge file ${rel}`) }
+    for (const rel of Object.keys(bundle.brain || {})) { const abs = brainPath(rel, { allowMissing: true }); if (abs && fs.existsSync(abs)) conflicts.push(`knowledge file ${rel}`) }
     if (conflicts.length) return res.status(409).json({ error: `${conflicts.slice(0, 10).join(', ')} already exist; explicit overwrite is required`, conflicts })
   }
   try {
@@ -2659,7 +2679,7 @@ app.post('/api/bundle/import/:id/decision', (req, res) => {
     for (const raw of bundle.agents || []) { const agent = { ...raw, permissions: 'standard' }; const list = loadAgents(), index = list.findIndex(current => current.id === agent.id); if (index >= 0) list[index] = agent; else list.push(agent); saveAgents(list); writeOcAgent(agent); summary.agents++ }
     for (const raw of bundle.workflows || []) { const workflow = createDevelopmentWorkflowCandidate(migrateWorkflowDocument(raw), { id: raw.id, name: raw.name, status: 'imported-review', provenance: { type: 'bundle', proposalId: item.id } }), file = path.join(WF_DIR, `${workflow.id}.json`); atomicWriteJsonSync(file, workflow); summary.workflows++ }
     if (bundle.profiles) { saveProfiles(bundle.profiles); summary.profiles = bundle.profiles.length }
-    for (const [rel, content] of Object.entries(bundle.brain || {})) { const abs = brainPath(rel); if (!abs) continue; fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, String(content)); summary.brainFiles++ }
+    for (const [rel, content] of Object.entries(bundle.brain || {})) { const abs = brainPath(rel, { allowMissing: true }); if (!abs) continue; writeFileBeneath(BRAIN_DIR, rel, String(content)); summary.brainFiles++ }
     item.status = 'installed'; item.decidedAt = Date.now(); item.bundle = undefined; item.applied = summary; writeJson(IMPORT_PROPOSALS_FILE, proposals); appendAudit('bundle_import_approved', { id: item.id, summary }); res.json({ ok: true, status: item.status, summary })
   } catch (error) {
     const denial = governanceErrorResponse(error)
