@@ -49,6 +49,9 @@ export type Workflow = { schemaVersion?: number; id: string; name: string; metad
 export type TriggerHistoryPage = { items: any[]; nextCursor: string | null }
 export type WfSummary = { id: string; name: string; nodes: number }
 export type WorkflowVersion = { id: string; savedAt: number; hash: string; name: string; nodes: number; current?: boolean }
+export type GovernanceCandidate = { schemaVersion: number; id: string; workflowId: string; workflowVersion: string; sourceHash: string; operationalHash: string; permissionHash: string; secretManifestHash: string; dependencyHash: string; environment: 'development' | 'testing'; status: string; createdBy: string; createdAt: number; recordHash: string }
+export type GovernanceRecord = { id: string; type: string; workflowId: string; workflowVersion: string; workflowHash: string; operationalHash: string; candidateId: string; selectedGateResultIds: string[]; actor: string; reason: string; createdAt: number; recordHash: string; [key: string]: any }
+export type WorkflowLifecycle = { workflowId: string; migration: { changed: boolean; reviewRequired: boolean; lifecycle: { state: string; reviewRequired: boolean; testingCandidateId?: string; testingApprovalId?: string; productionCandidateId?: string; productionApprovalId?: string; deploymentId?: string; rollbackId?: string; testingGateResultIds?: string[]; productionGateResultIds?: string[] } }; approvals: GovernanceRecord[]; deployments: GovernanceRecord[]; rollbacks: GovernanceRecord[] }
 export type WorkflowComponent = { id: string; name: string; description: string; nodeCount: number; currentVersionId: string | null; currentVersionHash: string | null; available: boolean; archived: boolean; unavailableReason: string | null }
 export type ComponentImportReview = { rootComponentId: string; componentCount: number; dependencyCount: number; executableNodes: number; conflicts: { componentId: string; type: string; message: string }[]; approvable: boolean }
 export type ComponentImportProposal = { status: string; proposalId: string; review: ComponentImportReview }
@@ -132,6 +135,10 @@ export const api = {
   saveWorkflow: (w: Workflow): Promise<Workflow> =>
     fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(w) }).then(j),
   workflowVersions: (id: string): Promise<WorkflowVersion[]> => fetch(`/api/workflows/${id}/versions`).then(j),
+  workflowLifecycle: (id: string): Promise<WorkflowLifecycle> => fetch(`/api/workflows/${encodeURIComponent(id)}/lifecycle`).then(j),
+  workflowCandidates: (id: string): Promise<GovernanceCandidate[]> => fetch(`/api/workflows/${encodeURIComponent(id)}/candidates`).then(j),
+  createWorkflowCandidate: (id: string, by = 'local-owner'): Promise<GovernanceCandidate> => fetch(`/api/workflows/${encodeURIComponent(id)}/candidates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by }) }).then(j),
+  transitionWorkflowLifecycle: (id: string, body: Record<string, unknown>): Promise<{ workflow: Workflow; lifecycle: WorkflowLifecycle['migration']['lifecycle'] }> => fetch(`/api/workflows/${encodeURIComponent(id)}/lifecycle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j),
   workflowNodeContracts: (): Promise<NodeContractsResponse> => fetch('/api/workflow-node-contracts').then(j),
   customNodes: (): Promise<any[]> => fetch('/api/custom-nodes').then(j),
   saveCustomNode: (definition: Record<string, unknown>): Promise<any> => fetch('/api/custom-nodes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(definition) }).then(j),
@@ -144,7 +151,7 @@ export const api = {
   previewConnection: (body: Record<string, unknown>): Promise<{ value: unknown; valid: boolean; errors: string[] }> => fetch('/api/workflow-connections/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j),
   restoreWorkflowVersion: (id: string, versionId: string): Promise<Workflow> => fetch(`/api/workflows/${id}/versions/${versionId}/restore`, { method: 'POST' }).then(j),
   delWorkflow: (id: string) => fetch(`/api/workflows/${id}`, { method: 'DELETE' }).then(j),
-  runWorkflow: (id: string, input: string, profileId?: string, safe?: boolean, options?: { nodeId?: string; nodeIds?: string[]; runMode?: 'full' | 'selected' | 'from' | 'branch'; resumeRunId?: string; fromNodeId?: string }): Promise<{ runId: string }> =>
+  runWorkflow: (id: string, input: string, profileId?: string, safe?: boolean, options?: { nodeId?: string; nodeIds?: string[]; runMode?: 'full' | 'selected' | 'from' | 'branch'; resumeRunId?: string; fromNodeId?: string; candidateId?: string; workflowVersion?: string }): Promise<{ runId: string }> =>
     fetch(`/api/workflows/${id}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input, profileId, safe, ...(options || {}) }) }).then(j),
   retryWorkflowRun: (runId: string, nodeId?: string, scope: 'node' | 'branch' = 'branch', input?: string): Promise<{ runId: string }> => fetch(`/api/workflows/runs/${runId}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nodeId, scope, input }) }).then(j),
   workflowCheckpoint: (runId: string): Promise<Record<string, any>> => fetch(`/api/workflows/runs/${runId}/checkpoint`).then(j),

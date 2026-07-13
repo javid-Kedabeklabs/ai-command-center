@@ -129,3 +129,47 @@ test('live backend saves, versions, approves, completes, and exposes safe run ev
   await expect(evidence).toContainText('out')
   await expect(evidence).not.toContainText('browser-live-payload')
 })
+
+test('workflow governance advances only through exact immutable candidate evidence', async ({ page }) => {
+  const suffix = Date.now().toString(36)
+  const workflowId = `browser-governance-${suffix}`
+  const saveResponse = await page.request.post('/api/workflows', { data: {
+    schemaVersion: 2,
+    id: workflowId,
+    name: `Browser governance ${suffix}`,
+    environment: 'development',
+    governance: { status: 'draft', locked: false },
+    nodes: [
+      { id: 'in', type: 'input', position: { x: 80, y: 160 }, data: { label: 'Input' } },
+      { id: 'out', type: 'output', position: { x: 640, y: 160 }, data: { label: 'Output' } },
+    ],
+    edges: [{ id: 'edge-in-out', source: 'in', target: 'out' }],
+  } })
+  expect(saveResponse.ok(), await saveResponse.text()).toBeTruthy()
+
+  await page.reload()
+  await page.getByLabel('Workflow', { exact: true }).selectOption(workflowId)
+  await page.getByRole('button', { name: 'governance', exact: true }).click()
+  const panel = page.getByTestId('workflow-governance')
+  await expect(panel).toContainText('State: development')
+  await panel.getByRole('button', { name: 'Prepare immutable candidate' }).click()
+  await expect(panel).toContainText('DEVELOPMENT CANDIDATE')
+
+  page.on('dialog', dialog => dialog.accept())
+  await panel.getByRole('button', { name: 'Prepare exact Testing candidate' }).click()
+  await expect(panel).toContainText('State: testing-candidate')
+  await panel.getByRole('button', { name: 'Approve exact Testing candidate' }).click()
+  await expect(panel).toContainText('State: testing-approved')
+  await panel.getByRole('button', { name: 'Enter Testing with approved version' }).click()
+  await expect(panel).toContainText('State: testing')
+  await expect(panel).toContainText('Environment: testing')
+
+  const lifecycleResponse = await page.request.get(`/api/workflows/${workflowId}/lifecycle`)
+  const lifecycle = await lifecycleResponse.json()
+  expect(lifecycle.approvals).toHaveLength(1)
+  expect(lifecycle.approvals[0].candidateId).toBeTruthy()
+  expect(lifecycle.approvals[0].workflowVersion).toBeTruthy()
+  const report = await new AxeBuilder({ page }).include('[data-testid="workflow-governance"]').analyze()
+  const blocking = report.violations.filter(item => item.impact === 'serious' || item.impact === 'critical')
+  expect(blocking, blocking.map(item => `${item.id}: ${item.help}`).join('\n')).toEqual([])
+})

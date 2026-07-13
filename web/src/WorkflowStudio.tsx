@@ -6,8 +6,8 @@ import {
 } from '@xyflow/react'
 import {
   api, subscribeWfRun,
-  type AllModel, type Artifact, type ComponentImportProposal, type Profile, type RunDetail, type RunEvent, type SystemInfo, type Skill,
-  type NodeContract, type PortDefinition, type Workflow, type WorkflowComment, type WorkflowComponent, type WorkflowVersion, type WfSummary,
+  type AllModel, type Artifact, type ComponentImportProposal, type GovernanceCandidate, type Profile, type RunDetail, type RunEvent, type SystemInfo, type Skill,
+  type NodeContract, type PortDefinition, type Workflow, type WorkflowComment, type WorkflowComponent, type WorkflowLifecycle, type WorkflowVersion, type WfSummary,
 } from './api'
 import { historyStatus, triggerAvailability, triggerDeletePrompt, triggerSummary, triggerTypeLabel, type TriggerHistoryItem, type WorkflowTrigger } from './workflowTriggerHelpers'
 import {
@@ -881,7 +881,7 @@ function WorkflowStudio({ mode, onModeChange }: { mode: Mode; onModeChange: (mod
 
         <aside className={`node-inspector ${layout.right ? '' : 'collapsed'}`}>
           <button className="panel-collapse right" onClick={() => setLayout(l => ({ ...l, right: !l.right }))} title={layout.right ? 'Collapse Inspector' : 'Open Inspector'}>{layout.right ? '›' : '‹'}</button>
-          {layout.right ? (chosenComment ? <CommentInspector comment={chosenComment} targets={commentTargets} onEdit={() => editComment(chosenComment)} onToggle={() => toggleCommentResolved(chosenComment)} onAnchor={value => setCommentAnchor(chosenComment, value)} onDelete={() => deleteComment(chosenComment)} /> : selected || chosenEdge ? <Inspector node={selected} edge={chosenEdge} nodes={nodes} models={models} skills={skills} mode={mode} tab={inspectorTab} setTab={setInspectorTab} patch={patchSelected} remove={deleteSelected} input={input} snapshot={snapshot} setEdges={setEdges} openCode={() => setCodeFullscreen(true)} workflowId={wfId} onRestore={() => wfId && load(wfId)} /> : <WorkflowSettingsPanel workflowId={wfId} name={name} setName={setName} project={project} setProject={setProject} environment={environment} settings={workflowSettings} setSettings={setWorkflowSettings} variables={workflowVariables} setVariables={setWorkflowVariables} mode={mode} />) : <div className="vertical-label">INSPECTOR</div>}
+          {layout.right ? (chosenComment ? <CommentInspector comment={chosenComment} targets={commentTargets} onEdit={() => editComment(chosenComment)} onToggle={(() => toggleCommentResolved(chosenComment))} onAnchor={value => setCommentAnchor(chosenComment, value)} onDelete={() => deleteComment(chosenComment)} /> : selected || chosenEdge ? <Inspector node={selected} edge={chosenEdge} nodes={nodes} models={models} skills={skills} mode={mode} tab={inspectorTab} setTab={setInspectorTab} patch={patchSelected} remove={deleteSelected} input={input} snapshot={snapshot} setEdges={setEdges} openCode={() => setCodeFullscreen(true)} workflowId={wfId} onRestore={() => wfId && load(wfId)} /> : <WorkflowSettingsPanel workflowId={wfId} name={name} setName={setName} project={project} setProject={setProject} environment={environment} settings={workflowSettings} setSettings={setWorkflowSettings} variables={workflowVariables} setVariables={setWorkflowVariables} mode={mode} onLifecycleChanged={() => wfId && load(wfId)} />) : <div className="vertical-label">INSPECTOR</div>}
           {layout.right && <div className="panel-resizer panel-resizer-right" onPointerDown={e => startResize('right', e)} />}
         </aside>
       </div>
@@ -981,15 +981,108 @@ function CommentInspector({ comment, targets, onEdit, onToggle, onAnchor, onDele
   return <><div className="panel-heading inspector-title"><div><span className="eyebrow">NON-EXECUTABLE</span><h2><i>✎</i> Review Comment</h2></div></div><div className="inspector-scroll comment-inspector"><div className={`comment-inspector-status ${comment.resolved ? 'resolved' : ''}`}>{comment.resolved ? 'Resolved review context' : 'Open review context'}</div><p>{comment.text}</p><button className="inspector-secondary" onClick={onEdit}>Edit comment</button><label className="inspector-field">Semantic anchor<select value={value} onChange={event => onAnchor(event.target.value)}><option value="none">Canvas (no anchor)</option>{targets.map(target => <option key={`${target.type}:${target.id}`} value={`${target.type}:${target.id}`}>{target.type === 'group' ? 'Section' : 'Node'} · {target.label}</option>)}</select><small>Anchors identify review context only. They do not create edges, inputs, dependencies, or execution context.</small></label><div className={`comment-anchor-state ${status.state}`}>{status.label}</div><div className="plain-callout"><b>Review-only annotation</b><p>This comment is stored with the workflow and its versions, but never enters the executable graph or run records.</p></div></div><div className="inspector-footer"><button onClick={onToggle}>{comment.resolved ? 'Reopen' : 'Resolve'}</button><button className="danger" onClick={onDelete}>Delete</button></div></>
 }
 
-function WorkflowSettingsPanel({ workflowId, name, setName, project, setProject, environment, settings, setSettings, variables, setVariables, mode }: { workflowId: string; name: string; setName: (v: string) => void; project: string; setProject: (v: string) => void; environment: string; settings: Record<string, any>; setSettings: React.Dispatch<React.SetStateAction<Record<string, any>>>; variables: Record<string, any>; setVariables: React.Dispatch<React.SetStateAction<Record<string, any>>>; mode: Mode }) {
-  const [tab, setTab] = useState<'overview' | 'execution' | 'models' | 'permissions' | 'schedule' | 'variables'>('overview')
-  const tabs = mode === 'easy' ? ['overview', 'variables'] as const : ['overview', 'execution', 'models', 'permissions', 'schedule', 'variables'] as const
+function WorkflowGovernancePanel({ workflowId, onChanged }: { workflowId: string; onChanged: () => void }) {
+  const [lifecycle, setLifecycle] = useState<WorkflowLifecycle | null>(null)
+  const [candidates, setCandidates] = useState<GovernanceCandidate[]>([])
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [evaluations, setEvaluations] = useState<any[]>([])
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const refresh = useCallback(async () => {
+    if (!workflowId) { setLifecycle(null); setCandidates([]); setWorkflow(null); return }
+    try {
+      const [nextLifecycle, nextCandidates, nextWorkflow, nextEvaluations] = await Promise.all([
+        api.workflowLifecycle(workflowId), api.workflowCandidates(workflowId), api.workflow(workflowId), api.evaluations(),
+      ])
+      setLifecycle(nextLifecycle); setCandidates(nextCandidates); setWorkflow(nextWorkflow); setEvaluations(nextEvaluations); setError('')
+    } catch (reason) { setError(String(reason)) }
+  }, [workflowId])
+  useEffect(() => { void refresh() }, [refresh])
+
+  if (!workflowId) return <div className="plain-callout">Save this workflow before preparing immutable governance candidates.</div>
+  if (!lifecycle || !workflow) return <div className="plain-callout">{error || 'Loading exact lifecycle evidence…'}</div>
+
+  const state = lifecycle.migration.lifecycle.state
+  const stateCandidateId = state.startsWith('testing-') ? lifecycle.migration.lifecycle.testingCandidateId : state.startsWith('production-') || state === 'deployed' ? lifecycle.migration.lifecycle.productionCandidateId : undefined
+  const candidate = candidates.find(item => item.id === stateCandidateId)
+    || candidates.find(item => item.environment === workflow.environment)
+    || null
+  const requiredSuiteIds: string[] = Array.isArray(workflow.governance?.promotionGates?.evaluations)
+    ? workflow.governance!.promotionGates.evaluations.map(String)
+    : Array.isArray(workflow.evaluations) ? workflow.evaluations.filter(item => typeof item === 'string').map(String) : []
+  const gateRecords: any[] = candidate ? requiredSuiteIds.flatMap((suiteId: string) => {
+    const suite = evaluations.find(item => item.id === suiteId)
+    const record = suite?.history?.find((item: any) => item.candidateId === candidate.id && item.promotable === true)
+    return record ? [record] : []
+  }) : []
+  const selectedGateResultIds = state.includes('candidate') || state.includes('approved')
+    ? (state.startsWith('production-') ? lifecycle.migration.lifecycle.productionGateResultIds : lifecycle.migration.lifecycle.testingGateResultIds) || []
+    : gateRecords.map(record => record.id)
+  const missingGates: string[] = requiredSuiteIds.filter((id: string) => !gateRecords.some((record: any) => record.evaluationId === id || record.suiteId === id))
+
+  let action: string | null = null, label = ''
+  if (state === 'development' && candidate) { action = 'prepare-testing'; label = 'Prepare exact Testing candidate' }
+  else if (state === 'testing-candidate') { action = 'approve-testing'; label = 'Approve exact Testing candidate' }
+  else if (state === 'testing-approved') { action = 'enter-testing'; label = 'Enter Testing with approved version' }
+  else if (state === 'testing' && candidate) { action = 'prepare-production'; label = 'Prepare exact Production candidate' }
+  else if (state === 'production-candidate') { action = 'approve-production'; label = 'Approve exact Production candidate' }
+  else if (state === 'production-approved') { action = 'deploy-production'; label = 'Deploy exact approved version' }
+  else if (state === 'deployed') { action = 'rollback'; label = 'Rollback exact deployment to Testing' }
+
+  const perform = async (operation: string, work: () => Promise<unknown>) => {
+    setBusy(operation); setError(''); setNotice('')
+    try { await work(); await refresh(); onChanged(); setNotice(`${operation} committed with immutable evidence.`) }
+    catch (reason) { setError(String(reason)) }
+    finally { setBusy('') }
+  }
+  const createCandidate = () => perform('candidate', () => api.createWorkflowCandidate(workflowId))
+  const transition = () => {
+    if (!action || !candidate) return
+    const approvalDecisionId = action === 'enter-testing' ? lifecycle.migration.lifecycle.testingApprovalId : action === 'deploy-production' ? lifecycle.migration.lifecycle.productionApprovalId : undefined
+    const deploymentId = action === 'rollback' ? lifecycle.migration.lifecycle.deploymentId : undefined
+    if (!window.confirm(`${label}?\n\nCandidate ${candidate.id}\nVersion ${candidate.workflowVersion}\nHash ${candidate.sourceHash}`)) return
+    perform(action, () => api.transitionWorkflowLifecycle(workflowId, {
+      action, actor: 'local-owner', reason: `${action} through reviewed product lifecycle`, candidateId: candidate.id,
+      expectedWorkflowId: workflowId, expectedWorkflowVersion: candidate.workflowVersion, expectedWorkflowHash: candidate.sourceHash,
+      expectedOperationalHash: candidate.operationalHash, selectedGateResultIds,
+      ...(approvalDecisionId ? { approvalDecisionId } : {}), ...(deploymentId ? { deploymentId } : {}),
+    }))
+  }
+  const runCandidate = () => candidate && perform('candidate-run', async () => {
+    const result = await api.runWorkflow(workflowId, 'Exact candidate governance evaluation', undefined, true, { candidateId: candidate.id, workflowVersion: candidate.workflowVersion })
+    setNotice(`Candidate run ${result.runId} started. Attach required evaluations in Evaluation Lab.`)
+  })
+
+  return <section className="workflow-governance" data-testid="workflow-governance">
+    <div className="plain-callout"><b>Exact-version lifecycle</b><p>State: {state} · Environment: {workflow.environment}. Every action is bound to immutable workflow, operational, permission, secret-manifest, and dependency hashes.</p></div>
+    {lifecycle.migration.reviewRequired && <p className="error-text">Legacy lifecycle evidence requires explicit repository review. Promotion remains locked.</p>}
+    {candidate ? <div className="version-card"><span>{candidate.environment.toUpperCase()} CANDIDATE</span><b>{candidate.workflowVersion}</b><p>{candidate.sourceHash} · {candidate.id}</p></div> : <div className="plain-callout">No immutable candidate exists for the current environment.</div>}
+    {!!requiredSuiteIds.length && <div className="plain-callout"><b>Required evaluation receipts</b><p>{requiredSuiteIds.map((id: string) => `${id}${missingGates.includes(id) ? ' · missing' : ' · passed'}`).join('\n')}</p></div>}
+    <div className="inspector-actions">
+      {['development', 'testing'].includes(state) && <button disabled={!!busy || lifecycle.migration.reviewRequired} onClick={createCandidate}>{candidate ? 'Prepare refreshed immutable candidate' : 'Prepare immutable candidate'}</button>}
+      {candidate && ['development', 'testing'].includes(state) && <button disabled={!!busy} onClick={runCandidate}>Run exact candidate</button>}
+      {action && candidate && <button className="primary" disabled={!!busy || lifecycle.migration.reviewRequired || ((action === 'prepare-production' || action === 'approve-production' || action === 'deploy-production') && missingGates.length > 0)} onClick={transition}>{busy === action ? 'Committing…' : label}</button>}
+      <button disabled={!!busy} onClick={() => void refresh()}>Refresh evidence</button>
+    </div>
+    {lifecycle.approvals.slice(-3).map(item => <small key={item.id}>Approval {item.id} · {item.workflowVersion}</small>)}
+    {lifecycle.deployments.slice(-2).map(item => <small key={item.id}>Deployment {item.id} · {item.workflowVersion}</small>)}
+    {lifecycle.rollbacks.slice(-2).map(item => <small key={item.id}>Rollback {item.id} · {item.workflowVersion}</small>)}
+    {notice && <p className="ok">{notice}</p>}{error && <p className="error-text">{error}</p>}
+  </section>
+}
+
+function WorkflowSettingsPanel({ workflowId, name, setName, project, setProject, environment, settings, setSettings, variables, setVariables, mode, onLifecycleChanged }: { workflowId: string; name: string; setName: (v: string) => void; project: string; setProject: (v: string) => void; environment: string; settings: Record<string, any>; setSettings: React.Dispatch<React.SetStateAction<Record<string, any>>>; variables: Record<string, any>; setVariables: React.Dispatch<React.SetStateAction<Record<string, any>>>; mode: Mode; onLifecycleChanged: () => void }) {
+  const [tab, setTab] = useState<'overview' | 'execution' | 'models' | 'permissions' | 'governance' | 'schedule' | 'variables'>('overview')
+  const tabs = mode === 'easy' ? ['overview', 'variables'] as const : ['overview', 'execution', 'models', 'permissions', 'governance', 'schedule', 'variables'] as const
   const patch = (next: Record<string, any>) => setSettings(s => ({ ...s, ...next }))
   return <><div className="panel-heading"><div><span className="eyebrow">WORKFLOW</span><h2>Settings</h2></div></div><div className="inspector-tabs">{tabs.map(t => <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{t}</button>)}</div><div className="inspector-scroll">
     {tab === 'overview' && <><Field label="Name"><input aria-label="Workflow name" value={name} onChange={e => setName(e.target.value)} /></Field><Field label="Project"><input aria-label="Workflow project" value={project} onChange={e => setProject(e.target.value)} /></Field><Field label="Environment"><input aria-label="Workflow environment" value={environment} readOnly /></Field><div className="plain-callout">Select a node to inspect its configuration. Click a connection to control routing and data flow.</div></>}
     {tab === 'execution' && <><label className="toggle-row"><input type="checkbox" checked={settings.localOnly !== false} onChange={e => patch({ localOnly: e.target.checked })} />Keep execution local-only</label><Field label="Maximum concurrent work"><input type="number" min="1" max="32" value={settings.parallelism || 4} onChange={e => patch({ parallelism: +e.target.value })} /></Field><Field label="Maximum run duration (ms)"><input type="number" min="60000" value={settings.maxDuration || 21600000} onChange={e => patch({ maxDuration: +e.target.value })} /></Field><Field label="Default retries"><input type="number" min="0" max="5" value={settings.retries || 0} onChange={e => patch({ retries: +e.target.value })} /></Field><label className="toggle-row"><input type="checkbox" checked={settings.cache !== false} onChange={e => patch({ cache: e.target.checked })} />Reuse safe cached outputs</label></>}
     {tab === 'models' && <div className="plain-callout"><b>Balanced routing</b><br />Nodes use their own model policy. The selected execution profile can override role-based policies for a run.</div>}
     {tab === 'permissions' && <div className="permission-list"><Permission yes text="Run approved workflow nodes" /><Permission yes={settings.localOnly !== false} text="Keep model and tool activity local" /><Permission yes text="Write inside isolated run workspaces" /><Permission yes={false} text="Expose secret values in workflow files" /></div>}
+    {tab === 'governance' && <WorkflowGovernancePanel workflowId={workflowId} onChanged={onLifecycleChanged} />}
     {tab === 'schedule' && <><Field label="Preferred trigger"><select value={settings.schedule || 'manual'} onChange={e => patch({ schedule: e.target.value })}><option value="manual">Manual</option><option value="scheduled">Scheduled</option><option value="webhook">Webhook</option><option value="folder">Watched folder</option></select></Field><div className="plain-callout">Persistent trigger services are active. Use <b>Run → Schedule or trigger run</b> to add an interval, cron, secure webhook, or watched-folder trigger.</div><WorkflowTriggerManager workflowId={workflowId} /></>}
     {tab === 'variables' && <VariableEditor variables={variables} setVariables={setVariables} />}
   </div></>

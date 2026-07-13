@@ -2,10 +2,10 @@
 
 ## Iteration identity
 
-- Timestamp: 2026-07-13T23:37:30Z
+- Timestamp: 2026-07-14T00:06:00Z
 - Phase: critical runtime durability
 - Base commit: `519fafd` (`Prioritize the full delivery portfolio`)
-- Task: complete the safe evidence product path and make the live backend journey a browser release gate
+- Task: expose the exact immutable governance lifecycle in Workflow Studio and prove it against the live backend
 - Commits through prior checkpoint: `9ab9403`, `c38154e`, `6c6c715`, `7e907f1`, `8a05cc4`, `949484b`, `789cdf8`, `f150cc8`
 
 ## Completed
@@ -31,6 +31,9 @@
 - Added a live-backend browser acceptance journey that saves a typed workflow, creates its immutable run version, reaches durable approval, submits a revision/subject-bound decision, completes, and verifies safe evidence in Run Center without route mocks.
 - Corrected Workflow Studio's durable approval state handling from the nonexistent `requested` display value to the authoritative `pending` state, restoring approval controls and waiting-node truthfulness.
 - Existing request guarding, deny-wins permissions, symlink-safe filesystem boundaries, immutable versions, typed ports, Keychain references, and trigger-store durability remain in force.
+- Added typed lifecycle, immutable-candidate, approval, deployment, and rollback clients. Candidate-bound runs now carry the exact candidate and workflow-version identity needed for promotable evaluation evidence.
+- Added a Workflow Studio governance panel that derives permitted actions from the persisted lifecycle state, displays exact candidate/version/hash evidence, reports required evaluation receipts, and submits fully bound Development → Testing → Production or rollback requests rather than mutable promotion commands.
+- Added a live-backed browser lifecycle journey proving immutable candidate creation, exact Testing preparation, approval, single-use entry, and persisted approval evidence.
 - Committed the product journey at `8d231e0` and published sanitized public review snapshot `a6232e9` on `review/current-20260713`; unauthenticated `git ls-remote` confirms it is public.
 - Reloaded the committed implementation through host request `host-5c3fe066d0712a55`; its HTTP 200 health postcondition and receipt SHA-256 `1cd8aa0b89c7ea1c76bfbbd2c4d67bcafe2c126805b08faf1eb6356e2e682be8` passed.
 
@@ -43,9 +46,9 @@
 - Trigger store/idempotency: 17/17.
 - Safe filesystem boundary: 6/6.
 - Phase 0 contract: 37/37 on isolated state.
-- Browser Playwright suite: 4/4, including the live save/version/run/approve/evidence journey.
+- Browser Playwright suite: 5/5, including the live save/version/run/approve/evidence and exact governance journeys.
 - Safe evidence canary: 1/1 across durable data, artifacts, detail/evidence APIs, audit, and bundle export; redaction transforms: 11/11.
-- Unified release verification passed all 12 gates with receipt SHA-256 `59406fa1c0ee9c599c955bdad7db35eb0f68c021d5e6baea42dc4e9b5be2a54f`.
+- Unified release verification passed all 12 gates with receipt SHA-256 `f4e20ddb9899c1f9ce3b245caec5657521cf7d08a52544cb72c86c94cd50cb81`.
 - Smoke: 30/30 on isolated state.
 - TypeScript and production build: passed.
 - Staged and public-snapshot Gitleaks scans: passed.
@@ -66,6 +69,6 @@
 
 ## Next
 
-- Continue exact-version governance, evaluation, reusable-component, and reviewed-plugin UX integration against the safe evidence contract.
+- Complete exact-candidate evaluation selection and reviewed-plugin evidence UX against the now-visible lifecycle contract.
 - Make Company World render only authoritative persisted checkpoint/control states.
 - Complete packaging inventory, backup/restore rehearsal, upgrade/rollback receipts, and the remaining hardening audit.
