@@ -33,6 +33,7 @@ import { createSecretReferenceRouter } from './secrets/router.js'
 import { authorizedHttpHeaders, remoteMcpAuthOptions, validateCredentialSafeHttpUrl } from './secrets/runtime.js'
 import { minimalProviderEnvironment } from './secrets/provider-env.js'
 import { atomicWriteJsonSync } from './storage/atomic-json.js'
+import { resolveDataRoot } from './operations/data-root.js'
 import { governanceAuditDetail, governanceErrorResponse } from './governance/audit.js'
 import { assertOrdinaryWorkflowSave, assertWorkflowDelete, assertWorkflowImport, assertWorkflowRestore, createDevelopmentWorkflowCandidate, preserveWorkflowLifecycle } from './governance/mutations.js'
 import { createCandidateRecord, createCandidateStore, workflowOperationalEvidence } from './governance/candidates.js'
@@ -44,9 +45,7 @@ import { readFileBeneath, resolvePathBeneath, unlinkFileBeneath, writeFileBeneat
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
-const requestedData = process.env.ACC_DATA_DIR ? path.resolve(ROOT, process.env.ACC_DATA_DIR) : path.join(ROOT, 'data')
-if (requestedData !== ROOT && !requestedData.startsWith(`${ROOT}${path.sep}`)) throw new Error('ACC_DATA_DIR must resolve inside the repository worktree')
-const DATA = requestedData
+const DATA = resolveDataRoot({ repositoryRoot: ROOT, configured: process.env.ACC_DATA_DIR, allowExternal: process.env.ACC_ALLOW_EXTERNAL_DATA_DIR === '1' })
 const RUNS_DIR = path.join(DATA, 'runs')
 fs.mkdirSync(RUNS_DIR, { recursive: true })
 const CUSTOM_NODES_FILE = path.join(DATA, 'custom-nodes.json')
