@@ -2,7 +2,7 @@
 
 This branch is a sanitized source snapshot for independent AI review.
 
-- Local source checkpoint: `789cdf8` (`Persist subworkflow and trigger recovery receipts`)
+- Local source checkpoint: `f150cc8` (`Publish linked redacted run evidence`)
 - Runtime data, audit logs, profiles, generated stores, credentials, local models, and user content are excluded.
 - Treat `docs/IMPLEMENTATION_STATUS.md`, `HANDOFF.md`, and the current source/tests as authoritative; do not rely on older review commit `ad82a1a`.
 
