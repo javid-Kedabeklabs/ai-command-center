@@ -6,7 +6,7 @@ import {
 } from '@xyflow/react'
 import {
   api, subscribeWfRun,
-  type AllModel, type Artifact, type ComponentImportProposal, type Profile, type RunEvent, type SystemInfo, type Skill,
+  type AllModel, type Artifact, type ComponentImportProposal, type Profile, type RunDetail, type RunEvent, type SystemInfo, type Skill,
   type NodeContract, type PortDefinition, type Workflow, type WorkflowComment, type WorkflowComponent, type WorkflowVersion, type WfSummary,
 } from './api'
 import { historyStatus, triggerAvailability, triggerDeletePrompt, triggerSummary, triggerTypeLabel, type TriggerHistoryItem, type WorkflowTrigger } from './workflowTriggerHelpers'
@@ -25,6 +25,7 @@ type BottomTab = 'timeline' | 'logs' | 'variables' | 'errors' | 'artifacts' | 'r
 type Layout = { left: boolean; right: boolean; bottom: boolean; architect: boolean; leftWidth: number; rightWidth: number; bottomHeight: number }
 type SavedLayout = { name: string; value: Layout }
 type ContextState = { x: number; y: number; kind: 'node' | 'edge' | 'canvas'; id?: string } | null
+type DurableApproval = { id: string; nodeId: string; subjectHash: string; revision: number; state: string }
 
 type CatalogItem = {
   type: string; label: string; description: string; glyph: string; category: string; keywords: string[]; available: boolean
@@ -278,6 +279,7 @@ function WorkflowStudio({ mode, onModeChange }: { mode: Mode; onModeChange: (mod
   const [running, setRunning] = useState(false)
   const [paused, setPaused] = useState(false)
   const [runId, setRunId] = useState('')
+  const [durableApprovals, setDurableApprovals] = useState<DurableApproval[]>([])
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [sys, setSys] = useState<SystemInfo | null>(null)
   const [notice, setNotice] = useState('')
@@ -552,31 +554,44 @@ function WorkflowStudio({ mode, onModeChange }: { mode: Mode; onModeChange: (mod
     return saved.id
   }, [wfId, name, nodes, edges, comments, environment, project, workflowSettings, workflowVariables, refresh])
 
+  const applyDurableRunState = useCallback((detail: RunDetail) => {
+    const approvals = Object.values(detail.control?.approvals || {})
+    setDurableApprovals(approvals)
+    setPaused(!!detail.control?.manualPause?.paused || !!detail.paused)
+    setRunning(['running', 'paused'].includes(detail.status))
+    const waiting = new Set(approvals.filter(item => item.state === 'requested').map(item => item.nodeId))
+    if (detail.checkpoint?.nodes) setNodes(current => current.map(node => {
+      const durable = detail.checkpoint?.nodes?.[node.id]
+      if (!durable) return node
+      const status = waiting.has(node.id) ? 'awaiting-approval' : durable.state === 'succeeded' ? 'succeeded' : durable.state === 'skipped' ? 'skipped' : ['failed', 'needs_review'].includes(durable.state) ? 'failed' : ['running', 'waiting'].includes(durable.state) ? 'running' : ''
+      return { ...node, data: { ...node.data, status } }
+    }))
+  }, [setNodes])
+
   const run = useCallback(async (safe = false, inputOverride?: string, options?: { nodeId?: string; nodeIds?: string[]; runMode?: 'full' | 'selected' | 'from' | 'branch' }) => {
     const problems = validate()
     if (problems.length) { setNotice(`Cannot run: ${problems[0]}`); setBottomTab('errors'); setLayout(l => ({ ...l, bottom: true })); return }
     try {
       const savedId = await save()
-      setEvents([]); setArtifacts([]); setRunning(true); setPaused(false); setBottomTab('timeline'); setLayout(l => ({ ...l, bottom: true }))
+      setEvents([]); setArtifacts([]); setDurableApprovals([]); setRunning(true); setPaused(false); setBottomTab('timeline'); setLayout(l => ({ ...l, bottom: true }))
       setNodes(ns => ns.map(n => ({ ...n, data: { ...n.data, status: '' } })))
       const started = await api.runWorkflow(savedId, inputOverride ?? input, profileId || undefined, safe, options)
       setRunId(started.runId)
       let activeRunId = started.runId
       subscribeWfRun(started.runId, ev => {
         setEvents(old => [...old, ev])
-        if (ev.nodeId) setNodes(ns => ns.map(n => n.id === ev.nodeId ? { ...n, data: { ...n.data, status: ev.text.startsWith('◎') ? 'awaiting-approval' : ev.text.startsWith('○') ? 'skipped' : ev.type === 'done' ? 'succeeded' : ev.type === 'error' ? 'failed' : 'running' } } : n))
+        void api.runDetail(activeRunId).then(applyDurableRunState).catch(() => {})
       }, async () => {
-        setRunning(false); setPaused(false)
+        await api.runDetail(activeRunId).then(applyDurableRunState).catch(() => { setRunning(false); setPaused(false) })
         api.artifacts().then(all => setArtifacts(all.filter(a => a.runId === activeRunId))).catch(() => {})
       }, (recoveredRunId, detail) => {
         activeRunId = recoveredRunId
         setRunId(recoveredRunId)
-        setRunning(['running', 'paused'].includes(detail.status))
-        setPaused(!!detail.control?.manualPause?.paused || !!detail.paused)
+        applyDurableRunState(detail)
         setNotice(`Recovered durable run ${recoveredRunId.slice(-6)}`)
       })
     } catch (e) { setRunning(false); setNotice(`Run could not start: ${e}`) }
-  }, [validate, save, input, profileId, setNodes])
+  }, [validate, save, input, profileId, setNodes, applyDurableRunState])
 
   const newWorkflow = () => {
     snapshot(); setWfId(''); setName('Untitled Workflow'); setProject('Command Center'); setEnvironment('development'); setWorkflowSettings({ localOnly: true, parallelism: 4, maxDuration: 21600000, retries: 1, cache: true, schedule: 'manual' }); setWorkflowVariables({}); setComments([])
@@ -871,7 +886,7 @@ function WorkflowStudio({ mode, onModeChange }: { mode: Mode; onModeChange: (mod
         </aside>
       </div>
 
-      <BottomPanel open={layout.bottom} height={layout.bottomHeight} tab={bottomTab} setTab={setBottomTab} toggle={() => setLayout(l => ({ ...l, bottom: !l.bottom }))} onResize={e => startResize('bottom', e)} events={events} nodes={nodes} input={input} setInput={setInput} artifacts={artifacts} sys={sys} running={running} paused={paused} errors={eventErrors} profileId={profileId} setProfileId={setProfileId} profiles={profiles} runId={runId} variables={workflowVariables} setVariables={setWorkflowVariables} />
+      <BottomPanel open={layout.bottom} height={layout.bottomHeight} tab={bottomTab} setTab={setBottomTab} toggle={() => setLayout(l => ({ ...l, bottom: !l.bottom }))} onResize={e => startResize('bottom', e)} events={events} nodes={nodes} input={input} setInput={setInput} artifacts={artifacts} sys={sys} running={running} paused={paused} approvals={durableApprovals} errors={eventErrors} profileId={profileId} setProfileId={setProfileId} profiles={profiles} runId={runId} variables={workflowVariables} setVariables={setWorkflowVariables} />
 
       {layout.architect && <ArchitectDock input={architectInput} setInput={setArchitectInput} busy={architectBusy} reply={architectReply} proposal={proposal} diff={proposalDiff} selected={selectedData?.label} onSend={architect} onApply={applyProposal} onReject={() => { setProposal(null); setArchitectReply('Proposal discarded. Nothing changed.') }} onClose={() => setLayout(l => ({ ...l, architect: false }))} />}
       {codeFullscreen && selectedData?.ntype === 'python' && <PythonWorkspace data={selectedData} onSave={patch => { patchSelected(patch); setCodeFullscreen(false) }} onTest={() => run(true)} onClose={() => setCodeFullscreen(false)} />}
@@ -1193,13 +1208,13 @@ function PythonWorkspace({ data, onSave, onTest, onClose }: { data: any; onSave:
   return <div className="python-workspace-backdrop"><section className="python-workspace"><header><div><span>Py</span><div><small>CODE WORKSPACE</small><b>Python: {data.label}</b></div></div><div><button onClick={onTest}>Safe test</button><button className="primary" disabled={locked} onClick={() => onSave({ code })}>Save changes</button><button onClick={onClose}>×</button></div></header><div className="python-workspace-main"><aside><h3>Inputs</h3>{inputs.map((x: any) => <div className="python-schema-row" key={x.name}><b>{x.name}</b><span>{x.type}</span><small>{x.source}{x.required ? ' · required' : ''}</small></div>)}<h3>Outputs</h3>{outputs.map((x: any) => <div className="python-schema-row" key={x.name}><b>{x.name}</b><span>{x.type}</span><small>{x.description}</small></div>)}</aside><main><div className="code-toolbar"><span>process.py</span><em>{locked ? 'LOCKED' : String(data.codeMode || 'assisted').toUpperCase()}</em></div><textarea value={code} onChange={e => setCode(e.target.value)} readOnly={locked} spellCheck={false} aria-label="Python code editor" /></main><aside className="python-assistant"><div><span>✦</span><b>AI Assistant</b></div><p>Describe a change. The AI Architect can prepare a reviewable code diff without directly changing production code.</p><div className="python-suggestions"><button onClick={() => setAssistant('Add input validation and clear error messages.')}>Add validation</button><button onClick={() => setAssistant('Generate unit tests for every branch.')}>Generate tests</button><button onClick={() => setAssistant('Explain this script in plain language.')}>Explain code</button></div><textarea value={assistant} onChange={e => setAssistant(e.target.value)} placeholder="Ask for a code change…" /><button disabled={!assistant.trim()}>Prepare diff</button><small>AI code diffs are staged for review. Direct generation will be connected to the Architect code endpoint.</small></aside></div><footer><nav>{(['output', 'tests', 'logs', 'dependencies', 'versions', 'permissions'] as const).map(x => <button className={tab === x ? 'active' : ''} onClick={() => setTab(x)} key={x}>{x}</button>)}</nav><div>{tab === 'output' && <span>Run a Safe Test to inspect stdout and downstream behavior in the execution panel.</span>}{tab === 'tests' && <span>Regression tests run with the node's sample inputs before production promotion.</span>}{tab === 'logs' && <span>Python stderr and process diagnostics appear in the workflow Logs tab.</span>}{tab === 'dependencies' && <span>{(data.dependencies || []).length ? `Isolated cached environment: ${(data.dependencies || []).join(', ')}${data.allowPackageInstall ? ' · installation approved' : ' · awaiting installation approval'}` : 'No additional packages. Uses the system Python 3 interpreter.'}</span>}{tab === 'versions' && <span>Code is stored with the versioned workflow definition.</span>}{tab === 'permissions' && <span>The script can read and write only inside its isolated run workspace. Package installation is an explicit per-node permission.</span>}</div></footer></section></div>
 }
 
-function BottomPanel({ open, height, tab, setTab, toggle, onResize, events, nodes, input, setInput, artifacts, sys, running, paused, errors, profileId, setProfileId, profiles, runId, variables, setVariables }: { open: boolean; height: number; tab: BottomTab; setTab: (t: BottomTab) => void; toggle: () => void; onResize: (e: React.PointerEvent) => void; events: Event[]; nodes: Node[]; input: string; setInput: (s: string) => void; artifacts: Artifact[]; sys: SystemInfo | null; running: boolean; paused: boolean; errors: Event[]; profileId: string; setProfileId: (s: string) => void; profiles: Profile[]; runId: string; variables: Record<string, any>; setVariables: React.Dispatch<React.SetStateAction<Record<string, any>>> }) {
+function BottomPanel({ open, height, tab, setTab, toggle, onResize, events, nodes, input, setInput, artifacts, sys, running, paused, approvals, errors, profileId, setProfileId, profiles, runId, variables, setVariables }: { open: boolean; height: number; tab: BottomTab; setTab: (t: BottomTab) => void; toggle: () => void; onResize: (e: React.PointerEvent) => void; events: Event[]; nodes: Node[]; input: string; setInput: (s: string) => void; artifacts: Artifact[]; sys: SystemInfo | null; running: boolean; paused: boolean; approvals: DurableApproval[]; errors: Event[]; profileId: string; setProfileId: (s: string) => void; profiles: Profile[]; runId: string; variables: Record<string, any>; setVariables: React.Dispatch<React.SetStateAction<Record<string, any>>> }) {
   const tabs: { id: BottomTab; label: string; count?: number }[] = [{ id: 'timeline', label: 'Timeline' }, { id: 'logs', label: 'Logs' }, { id: 'variables', label: 'Variables' }, { id: 'errors', label: 'Errors', count: errors.length }, { id: 'artifacts', label: 'Artifacts', count: artifacts.length }, { id: 'resources', label: 'Resources' }, { id: 'console', label: 'Console' }]
   const label = (id?: string) => String(nodes.find(n => n.id === id)?.data.label || id || 'Workflow')
   const [recovery, setRecovery] = useState('')
   const retry = async (nodeId?: string, scope: 'node' | 'branch' = 'branch') => { if (!runId) return; try { const result = await api.retryWorkflowRun(runId, nodeId, scope); setRecovery(`Recovery run ${result.runId} started. Open Run Center to monitor it.`) } catch (error) { setRecovery(`Retry could not start: ${error}`) } }
   return <section className={`execution-panel ${open ? 'open' : 'closed'}`} style={open ? { height } : undefined}>{open && <div className="bottom-resizer" onPointerDown={onResize} />}<div className="execution-tabs">{tabs.map(t => <button key={t.id} className={tab === t.id && open ? 'active' : ''} onClick={() => { setTab(t.id); if (!open) toggle() }}>{t.label}{t.count ? <em>{t.count}</em> : null}</button>)}<span className={`run-health ${running ? 'running' : errors.length ? 'failed' : ''}`}><i />{paused ? 'Paused' : running ? 'Running' : errors.length ? 'Needs attention' : 'Ready'}</span><button className="panel-toggle" onClick={toggle}>{open ? '⌄' : '⌃'}</button></div>{open && <div className="execution-content">
-    {tab === 'timeline' && <div className="timeline-list">{events.length ? events.filter(e => e.type !== 'log').map((e, i) => { const awaiting = e.text.startsWith('◎') && e.nodeId && !events.slice(i + 1).some(later => later.nodeId === e.nodeId && (later.type === 'done' || later.type === 'error')); return <div key={i} className={`timeline-event ${e.type} ${awaiting ? 'approval-event' : ''}`}><time>{new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span className="timeline-dot" /><b>{label(e.nodeId)}</b><span>{e.text}{awaiting && <span className="approval-actions"><button onClick={() => { const comment = prompt('Optional direction for the next steps (for example, “Use concept 2”):') || ''; api.approveWorkflowNode(runId, e.nodeId!, 'approved', comment) }}>Approve</button><button onClick={() => { const comment = prompt('Why are you rejecting this result?') || ''; api.approveWorkflowNode(runId, e.nodeId!, 'rejected', comment) }}>Reject</button></span>}</span></div> }) : <div className="panel-empty">Run the workflow to see a chronological execution timeline.</div>}</div>}
+    {tab === 'timeline' && <div className="timeline-list">{events.length ? events.filter(e => e.type !== 'log').map((e, i) => { const approval = e.nodeId ? approvals.find(item => item.nodeId === e.nodeId && item.state === 'requested') : null; return <div key={i} className={`timeline-event ${e.type} ${approval ? 'approval-event' : ''}`}><time>{new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span className="timeline-dot" /><b>{label(e.nodeId)}</b><span>{e.text}{approval && <span className="approval-actions" data-approval-id={approval.id}><button onClick={() => { const comment = prompt('Optional direction for the next steps (for example, “Use concept 2”):') || ''; void api.approveWorkflowNode(runId, approval.nodeId, 'approved', comment, approval) }}>Approve</button><button onClick={() => { const comment = prompt('Why are you rejecting this result?') || ''; void api.approveWorkflowNode(runId, approval.nodeId, 'rejected', comment, approval) }}>Reject</button></span>}</span></div> }) : <div className="panel-empty">Run the workflow to see a chronological execution timeline.</div>}</div>}
     {tab === 'logs' && <pre className="execution-log">{events.map(e => `${new Date(e.t).toISOString()} ${e.nodeId ? `[${label(e.nodeId)}] ` : ''}${e.text}`).join('\n') || 'No logs yet.'}</pre>}
     {tab === 'variables' && <div className="variables-grid"><Field label="workflow_input"><textarea value={input} onChange={e => setInput(e.target.value)} placeholder="The request or data that starts this workflow" /></Field><Field label="model_tier"><select value={profileId} onChange={e => setProfileId(e.target.value)}><option value="">Use node policies</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><VariableEditor variables={variables} setVariables={setVariables} /><div className="secret-row"><span>Secrets</span><b>Secret references are selected by name; values are never stored in workflow JSON.</b></div></div>}
     {tab === 'errors' && <div>{errors.length ? errors.map((e, i) => <div className="execution-error" key={i}><b>{label(e.nodeId)} failed</b><p>{e.text}</p><span>Your workflow workspace and completed files are preserved. Completed checkpoints can be reused.</span><div className="error-recovery-actions"><button onClick={() => retry(e.nodeId, 'node')}>Retry node</button><button onClick={() => retry(e.nodeId, 'branch')}>Retry branch</button><button onClick={() => setTab('variables')}>Edit input</button><button onClick={() => setTab('logs')}>Technical details</button></div></div>) : <div className="panel-empty">No execution errors.</div>}{recovery && <div className="plain-callout">{recovery}</div>}</div>}

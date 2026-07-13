@@ -15,7 +15,10 @@ assert.equal(output.authorization, '[REDACTED]')
 assert.equal(output.nested.cookie, '[REDACTED]')
 assert.ok(!serialized.includes(canary))
 assert.ok(serialized.includes('[REDACTED]'))
+for (const encoded of [encodeURIComponent(canary), Buffer.from(canary).toString('base64'), Buffer.from(canary).toString('base64url'), Buffer.from(canary).toString('hex')]) {
+  assert.ok(!JSON.stringify(redact({ value: `before:${encoded}:after` })).includes(encoded))
+}
 assert.doesNotThrow(() => { const cycle = {}; cycle.self = cycle; redact(cycle) })
 const shared = { approvalId: 'approval-safe' }, repeated = redact({ nested: shared, lifecycle: shared })
 assert.equal(repeated.lifecycle.approvalId, 'approval-safe')
-console.log('redaction tests: 7/7 passed')
+console.log('redaction tests: 11/11 passed')

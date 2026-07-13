@@ -161,7 +161,7 @@ export const api = {
   learningProposals: (): Promise<any[]> => fetch('/api/learning/proposals').then(j),
   analyzeLearning: (workflowId: string): Promise<any[]> => fetch('/api/learning/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowId }) }).then(j),
   decideLearningProposal: (id: string, decision: 'approved' | 'rejected'): Promise<any> => fetch(`/api/learning/proposals/${encodeURIComponent(id)}/decision`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) }).then(j),
-  approveWorkflowNode: (runId: string, nodeId: string, decision: 'approved' | 'rejected', comment = '') => fetch(`/api/workflows/runs/${runId}/nodes/${nodeId}/approval`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, comment }) }).then(j),
+  approveWorkflowNode: (runId: string, nodeId: string, decision: 'approved' | 'rejected', comment = '', approval?: { id: string; revision: number; subjectHash: string }) => fetch(`/api/workflows/runs/${runId}/nodes/${nodeId}/approval`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, comment, ...(approval ? { commandId: `ui-${approval.id}-${decision}`, expectedRevision: approval.revision, expectedSubjectHash: approval.subjectHash } : {}) }) }).then(j),
   generateWorkflow: (goal: string, model?: string): Promise<Workflow> =>
     fetch('/api/workflows/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal, model }) }).then(j),
   testNode: (model: string, instruction: string, input: string): Promise<{ output: string }> =>

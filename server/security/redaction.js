@@ -17,8 +17,19 @@ function redactString(input, secrets) {
   return value
 }
 
+function secretVariants(secret) {
+  const raw = String(secret)
+  const variants = new Set([raw])
+  try { variants.add(encodeURIComponent(raw)) } catch {}
+  variants.add(JSON.stringify(raw).slice(1, -1))
+  variants.add(Buffer.from(raw, 'utf8').toString('base64'))
+  variants.add(Buffer.from(raw, 'utf8').toString('base64url'))
+  variants.add(Buffer.from(raw, 'utf8').toString('hex'))
+  return [...variants].filter(value => value.length >= 4)
+}
+
 export function createRedactor({ secretValues = new Set() } = {}) {
-  const secrets = () => [...secretValues].map(String).filter(Boolean).sort((a, b) => b.length - a.length)
+  const secrets = () => [...new Set([...secretValues].flatMap(secretVariants))].sort((a, b) => b.length - a.length)
   function redact(input) {
     const known = secrets(), seen = new WeakMap(), active = new WeakSet()
     const visit = value => {

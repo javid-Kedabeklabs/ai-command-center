@@ -4,12 +4,12 @@ Status: READY
 
 Portfolio order: `docs/PORTFOLIO_PRIORITY_PLAN.md`.
 
-Complete the hermetic release journey and safe evidence boundary on top of durable checkpoint/control/effect receipts.
+Complete the live-backed product journey on top of the required release verification and safe evidence boundary.
 
 Immediate work:
-- Extend the multi-crash journey through trigger delivery and redacted evidence export.
-- Update browser state to render durable approval/manual-pause records instead of inferring authority only from event text.
-- Define a safe browser/evidence DTO and prove secret canaries are absent from runs, checkpoints, audit, exports, API responses, and browser-visible evidence.
-- Wire the complete deterministic journey into the ordinary verification command instead of relying on standalone scripts.
+- Add a Playwright journey that builds, validates, saves, runs, durably approves, resumes, and inspects safe evidence against the live backend.
+- Surface linked safe evidence in Run Center without exposing raw checkpoint objects or run directories.
+- Continue the governance/evaluation/plugin lifecycle against exact workflow-version and evidence receipts.
+- Start packaging inventory and backup/restore receipt verification using the authoritative stores covered by `npm test`.
 
 Definition of done: the browser/API journey proves immutable build/save, parallel recovery, exactly-once-or-stop effects, durable approval, explicit pause, persisted trigger delivery, restart, completion, and redacted linked evidence with deterministic crash points and green regressions.

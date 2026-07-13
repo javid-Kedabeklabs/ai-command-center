@@ -76,6 +76,7 @@ const PORT = Number(process.env.PORT) || 1717
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:${path.join(HOME, '.lmstudio', 'bin')}:${process.env.PATH || ''}` }
 const KEYCHAIN_ACCOUNT = 'ai-command-center'
 const redactionSecretValues = new Set()
+if (process.env.NODE_ENV === 'test' && String(process.env.ACC_TEST_REDACTION_CANARY || '').length >= 12) redactionSecretValues.add(String(process.env.ACC_TEST_REDACTION_CANARY))
 const { redact: redactReleaseValue } = createRedactor({ secretValues: redactionSecretValues })
 const rawSecretReferenceRegistry = createSecretReferenceRegistry({ file: SECRET_REFERENCES_FILE, keychain: createMacKeychainSecretStore({ account: KEYCHAIN_ACCOUNT }) })
 const secretReferenceRegistry = {
@@ -567,6 +568,36 @@ app.get('/api/runs/:id/detail', (req, res) => {
   let artifacts = []
   if (rec.dir) { try { artifacts = fs.readdirSync(rec.dir, { withFileTypes: true }).filter(entry => !entry.name.startsWith('.') && !entry.isSymbolicLink()).map(entry => { const st = fs.lstatSync(path.join(rec.dir, entry.name)); return { name: entry.name, size: st.size, isDir: st.isDirectory() } }) } catch {} }
   res.json({ ...rec, artifacts })
+})
+function runEvidenceDto(rec, artifacts = []) {
+  const nodes = Object.fromEntries(Object.entries(rec.checkpoint?.nodes || {}).map(([nodeId, node]) => [nodeId, {
+    state: node.state,
+    attemptsStarted: node.attemptsStarted,
+    inputHash: node.inputHash || null,
+    outputHash: node.outputHash || null,
+    effect: node.effect ? { operationKey: node.effect.operationKey, requestHash: node.effect.requestHash, state: node.effect.state, receiptRef: node.effect.receiptRef || null } : null,
+    wait: node.wait ? { kind: node.wait.kind, ref: node.wait.ref } : null,
+  }]))
+  const approvals = Object.values(rec.control?.approvals || {}).map(item => ({ id: item.id, nodeId: item.nodeId, subjectHash: item.subjectHash, revision: item.revision, state: item.state, requestedAtEpochMs: item.requestedAtEpochMs, decidedAtEpochMs: item.decision?.decidedAtEpochMs || null }))
+  const evidence = redactReleaseValue({
+    schemaVersion: 1,
+    run: { id: rec.id, logicalRunId: rec.logicalRunId || rec.id, workflowId: rec.workflowId || null, workflowVersion: rec.workflowVersion || null, workflowVersionHash: rec.checkpoint?.workflowVersionHash || null, status: rec.status, started: rec.started || null, ended: rec.ended || null, resumedFrom: rec.resumedFrom || null, recoveredBy: rec.recoveredBy || null },
+    triggerReceipt: rec.checkpoint?.triggerReceipt || null,
+    manualPause: rec.control?.manualPause ? { paused: rec.control.manualPause.paused, generation: rec.control.manualPause.generation } : null,
+    approvals,
+    checkpoint: { schemaVersion: rec.checkpoint?.schemaVersion || null, revision: rec.checkpoint?.revision || null, nodes },
+    events: (rec.events || []).map(event => ({ t: event.t, type: event.type, nodeId: event.nodeId || null, text: event.text })),
+    artifacts: artifacts.map(item => ({ name: item.name, size: item.size, isDir: !!item.isDir })),
+  })
+  return { ...evidence, evidenceId: crypto.createHash('sha256').update(JSON.stringify(evidence)).digest('hex') }
+}
+app.get('/api/runs/:id/evidence', (req, res) => {
+  let rec = runs.get(req.params.id)
+  if (rec) { const { listeners, proc, procs, controllers, resourceCoordinator, modelAbortController, ...rest } = rec; rec = { id: req.params.id, ...rest } }
+  else { try { rec = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, req.params.id + '.json'), 'utf8')) } catch { return res.status(404).json({ error: 'not found' }) } }
+  let artifacts = []
+  if (rec.dir) { try { artifacts = fs.readdirSync(rec.dir, { withFileTypes: true }).filter(entry => !entry.name.startsWith('.') && !entry.isSymbolicLink()).map(entry => { const st = fs.lstatSync(path.join(rec.dir, entry.name)); return { name: entry.name, size: st.size, isDir: st.isDirectory() } }) } catch {} }
+  res.set('Cache-Control', 'no-store').json(runEvidenceDto(rec, artifacts))
 })
 // read a single artifact file's text (path-guarded to run dirs)
 app.get('/api/runs/:id/artifact', (req, res) => {
@@ -2211,7 +2242,7 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         const vault = externalDirectory(d.vaultPath || path.join(HOME, 'AgentBrain'), `${d.label || nid} vault`)
         let note = fillTemplate(d.notePath || `${wf.name || 'Workflow Result'}.md`).replace(/^\/+/, '')
         if (!path.extname(note)) note += '.md'
-        const content = upstream || input || ''
+        const content = redactReleaseValue(String(upstream || input || ''))
         const file = writeFileBeneath(vault, note, d.append ? `\n\n${content}` : content, { append: d.append === true })
         outputs[nid] = file
         pushEvent(run, 'done', `✔ ${d.label || nid}: wrote ${path.relative(vault, file)}`, nid)
@@ -2363,7 +2394,7 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         requirePermission(node, 'write-files')
         const relative = runRelativePath(d.path, 'output.txt')
         const encoding = d.encoding || 'utf8'
-        const content = upstream || input || ''
+        const content = redactReleaseValue(String(upstream || input || ''))
         const contentHash = crypto.createHash('sha256').update(content, encoding).digest('hex')
         const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
         run.checkpoint = prepareEffect(run.checkpoint, nid, attemptId, { requestHash: crypto.createHash('sha256').update(JSON.stringify({ relative, encoding, contentHash })).digest('hex'), reconciliation: { kind: 'file-write', relativePath: relative, encoding, contentHash }, output: relative })
