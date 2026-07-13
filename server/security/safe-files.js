@@ -60,6 +60,25 @@ export function writeFileBeneath(rootValue, relative, value, { encoding = 'utf8'
   const target = resolvePathBeneath(rootValue, relative, { allowMissing: true })
   ensureParents(target.root, target.path)
   if (lstat(target.path)?.isSymbolicLink()) fail('write target cannot be a symbolic link')
+  if (!append) {
+    const temporary = path.join(path.dirname(target.path), `.${path.basename(target.path)}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`)
+    let descriptor
+    try {
+      descriptor = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0), mode)
+      if (!fs.fstatSync(descriptor).isFile()) fail('temporary write target must be a regular file')
+      fs.writeFileSync(descriptor, value, encoding)
+      fs.fsyncSync(descriptor)
+      fs.closeSync(descriptor); descriptor = null
+      if (lstat(target.path)?.isSymbolicLink()) fail('write target cannot become a symbolic link')
+      fs.renameSync(temporary, target.path)
+      const directory = fs.openSync(path.dirname(target.path), fs.constants.O_RDONLY)
+      try { fs.fsyncSync(directory) } finally { fs.closeSync(directory) }
+      return target.path
+    } finally {
+      if (descriptor != null) fs.closeSync(descriptor)
+      try { fs.unlinkSync(temporary) } catch {}
+    }
+  }
   const flags = (append ? fs.constants.O_APPEND : fs.constants.O_TRUNC) | fs.constants.O_CREAT | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0)
   const descriptor = fs.openSync(target.path, flags, mode)
   try {

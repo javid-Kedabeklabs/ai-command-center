@@ -15,7 +15,7 @@ import { listWorkflowVersions, resolvePinnedWorkflowVersion, saveWorkflowVersion
 import { archiveReusableComponent, renameReusableComponent, reusableComponentCatalog } from './workflows/components.js'
 import { exportComponentManifest, installComponentManifest, validateComponentManifest } from './workflows/component-manifests.js'
 import { runDependencyGraph } from './runtime/scheduler.js'
-import { claimNode, completeNode, createCheckpoint, failNode, migrateLegacyCheckpoint, recoverCheckpoint, resetCheckpointNodes, validateCheckpoint } from './runtime/checkpoint-state.js'
+import { claimNode, completeNode, confirmEffect, createCheckpoint, failNode, markEffectInflight, migrateLegacyCheckpoint, prepareEffect, recoverCheckpoint, resetCheckpointNodes, validateCheckpoint } from './runtime/checkpoint-state.js'
 import { ResourceCoordinator, nodeResourceLimit, normalizeResourcePolicy, resourcePolicyErrors } from './runtime/resources.js'
 import { GlobalModelCoordinator, explicitModelBytes, globalModelPolicyFromEnv } from './runtime/global-model-resources.js'
 import { childExecutionContext, effectiveExecutionContext, executionContextFromEvidence, executionPolicyEvidence, MAX_SUBWORKFLOW_DEPTH, parseInheritedExecutionContext, WORKFLOW_CAPABILITIES } from './runtime/subworkflow-context.js'
@@ -1896,7 +1896,21 @@ app.post('/api/workflows/:id/run', async (req, res) => {
     if (resumeSource?.checkpoint?.schemaVersion === 2) {
       validateCheckpoint(resumeSource.checkpoint)
       if (resumeSource.checkpoint.workflowVersion !== requestedVersion || resumeSource.checkpoint.workflowVersionHash !== checkpointIdentity.workflowVersionHash) throw new Error('resume checkpoint identity does not match the pinned workflow definition')
-      run.checkpoint = recoverCheckpoint(resumeSource.checkpoint, { runtimeEpoch, unsafeNodeIds: unsafeRecoveryNodeIds })
+      const reconcile = {}
+      for (const node of Object.values(resumeSource.checkpoint.nodes)) {
+        const evidence = node.effect?.reconciliation
+        if (node.state !== 'running' || node.effect?.state !== 'inflight' || evidence?.kind !== 'file-write') continue
+        try {
+          const target = resolvePathBeneath(cwd, evidence.relativePath, { allowMissing: true })
+          if (!fs.existsSync(target.path)) reconcile[node.nodeId] = 'absent'
+          else {
+            const value = readFileBeneath(cwd, evidence.relativePath, evidence.encoding || 'utf8')
+            const actualHash = crypto.createHash('sha256').update(value, evidence.encoding || 'utf8').digest('hex')
+            if (actualHash === evidence.contentHash) reconcile[node.nodeId] = 'confirmed'
+          }
+        } catch {}
+      }
+      run.checkpoint = recoverCheckpoint(resumeSource.checkpoint, { runtimeEpoch, unsafeNodeIds: unsafeRecoveryNodeIds, reconcile })
     } else if (resumeSource?.checkpoint) {
       run.checkpoint = migrateLegacyCheckpoint(resumeSource.checkpoint, checkpointIdentity)
     } else {
@@ -2268,8 +2282,19 @@ app.post('/api/workflows/:id/run', async (req, res) => {
       if (node.type === 'write-file') {
         requirePermission(node, 'write-files')
         const relative = runRelativePath(d.path, 'output.txt')
-        const file = writeFileBeneath(cwd, relative, upstream || input || '', { encoding: d.encoding || 'utf8' })
+        const encoding = d.encoding || 'utf8'
+        const content = upstream || input || ''
+        const contentHash = crypto.createHash('sha256').update(content, encoding).digest('hex')
+        const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
+        run.checkpoint = prepareEffect(run.checkpoint, nid, attemptId, { requestHash: crypto.createHash('sha256').update(JSON.stringify({ relative, encoding, contentHash })).digest('hex'), reconciliation: { kind: 'file-write', relativePath: relative, encoding, contentHash }, output: relative })
+        persistRun(runId, run)
+        run.checkpoint = markEffectInflight(run.checkpoint, nid, attemptId)
+        persistRun(runId, run)
+        const file = writeFileBeneath(cwd, relative, content, { encoding })
+        if (process.env.ACC_TEST_CRASH_AFTER_EFFECT === `${wf.id}:${nid}:file-write`) process.kill(process.pid, 'SIGKILL')
         outputs[nid] = path.relative(cwd, file)
+        run.checkpoint = confirmEffect(run.checkpoint, nid, attemptId, { receiptRef: `file:sha256:${contentHash}`, output: outputs[nid], outputHash: crypto.createHash('sha256').update(outputs[nid]).digest('hex') })
+        persistRun(runId, run)
         pushEvent(run, 'done', `✔ ${d.label || nid} saved ${outputs[nid]}`, nid)
         return
       }
@@ -2279,19 +2304,36 @@ app.post('/api/workflows/:id/run', async (req, res) => {
         const url = validateCredentialSafeHttpUrl(fillTemplate(d.url))
         if (executionContext.localOnly && !isLoopbackUrl(url)) throw new Error(`${d.label || nid} is blocked from remote network access by the effective local-only workflow policy`)
         const method = String(d.method || 'GET').toUpperCase()
+        const requestBody = ['GET', 'HEAD'].includes(method) ? undefined : (upstream || input || d.body || '')
+        const headers = authorizedHttpHeaders(d, secretReferenceRegistry)
+        const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+        const attemptId = run.checkpoint.nodes[nid].activeAttempt.id
+        if (mutating) {
+          const requestHash = crypto.createHash('sha256').update(JSON.stringify({ method, url, body: requestBody || '', headerNames: Object.keys(headers).map(value => value.toLowerCase()).sort() })).digest('hex')
+          run.checkpoint = prepareEffect(run.checkpoint, nid, attemptId, { requestHash, reconciliation: { kind: 'http', method, origin: new URL(url).origin } })
+          const idempotencyHeader = String(d.idempotencyHeader || '').trim()
+          if (idempotencyHeader) headers[idempotencyHeader] = run.checkpoint.nodes[nid].effect.operationKey
+          persistRun(runId, run)
+          run.checkpoint = markEffectInflight(run.checkpoint, nid, attemptId)
+          persistRun(runId, run)
+        }
         pushEvent(run, 'info', `▶ ${d.label || nid} — ${method} ${new URL(url).host}`, nid)
         const { response, body } = await resourceCoordinator.withResource('http', { nodeId: nid, limit: nodeResourceLimit(node, 'http') }, async () => {
           const controller = new AbortController(); run.controllers ||= new Set(); run.controllers.add(controller)
           try {
             const response = await fetch(url, {
               method,
-              headers: authorizedHttpHeaders(d, secretReferenceRegistry),
-              body: ['GET', 'HEAD'].includes(method) ? undefined : (upstream || input || d.body || ''),
+              headers,
+              body: requestBody,
               signal: AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1000, Math.min(120000, Number(d.timeoutMs) || 30000)))]),
             })
             return { response, body: await response.text() }
           } finally { run.controllers.delete(controller) }
         })
+        if (mutating) {
+          run.checkpoint = confirmEffect(run.checkpoint, nid, attemptId, { receiptRef: `http:${response.status}`, output: body, outputHash: crypto.createHash('sha256').update(body).digest('hex') })
+          persistRun(runId, run)
+        }
         if (!response.ok && d.failOnError !== false) throw new Error(`${method} ${new URL(url).origin} returned HTTP ${response.status}`)
         outputs[nid] = body
         pushEvent(run, 'done', `✔ ${d.label || nid}: HTTP ${response.status}`, nid)

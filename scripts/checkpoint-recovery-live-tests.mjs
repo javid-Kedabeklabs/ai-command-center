@@ -25,10 +25,10 @@ const request = async (route, options = {}) => {
 }
 const json = body => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
-async function startServer() {
+async function startServer(extraEnvironment = {}) {
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), ACC_DATA_DIR: path.relative(root, dataDir), ACC_BRAIN_DIR: path.relative(root, brainDir) },
+    env: { ...process.env, PORT: String(port), ACC_DATA_DIR: path.relative(root, dataDir), ACC_BRAIN_DIR: path.relative(root, brainDir), ...extraEnvironment },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   let stderr = ''
@@ -63,7 +63,7 @@ fs.mkdirSync(dataDir, { recursive: true })
 fs.mkdirSync(brainDir, { recursive: true })
 
 try {
-  server = await startServer()
+  server = await startServer({ ACC_TEST_CRASH_AFTER_EFFECT: 'checkpoint-recovery-live:write:file-write' })
   const workflow = {
     schemaVersion: 2,
     id: 'checkpoint-recovery-live',
@@ -88,18 +88,19 @@ try {
   response = await request(`/api/workflows/${workflow.id}/run`, { method: 'POST', ...json({ input: 'crash-evidence' }) })
   assert.equal(response.response.status, 200, JSON.stringify(response.body))
   const interruptedId = response.body.runId
+  const interruptedFile = path.join(dataDir, 'runs', `${interruptedId}.json`)
   const interrupted = await waitFor(async () => {
-    const detail = (await request(`/api/runs/${interruptedId}/detail`)).body
-    return detail.checkpoint?.nodes?.slow?.state === 'running' && detail.checkpoint?.nodes?.write?.state === 'succeeded' ? detail : null
-  }, 'parallel branches did not reach the required crash boundary')
+    if (!fs.existsSync(interruptedFile)) return null
+    const detail = JSON.parse(fs.readFileSync(interruptedFile, 'utf8'))
+    return detail.checkpoint?.nodes?.slow?.state === 'running' && detail.checkpoint?.nodes?.write?.effect?.state === 'inflight' && (server.exitCode != null || server.signalCode) ? detail : null
+  }, 'parallel branches did not reach the deterministic post-write crash boundary')
   assert.equal(interrupted.checkpoint.schemaVersion, 2)
   assert.equal(interrupted.checkpoint.nodes.write.attemptsStarted, 1)
-
-  await stopServer('SIGKILL')
-  const interruptedFile = path.join(dataDir, 'runs', `${interruptedId}.json`)
+  server = null
   const killedSnapshot = JSON.parse(fs.readFileSync(interruptedFile, 'utf8'))
   assert.equal(killedSnapshot.checkpoint.nodes.slow.state, 'running')
-  assert.equal(killedSnapshot.checkpoint.nodes.write.state, 'succeeded')
+  assert.equal(killedSnapshot.checkpoint.nodes.write.state, 'running')
+  assert.equal(killedSnapshot.checkpoint.nodes.write.effect.state, 'inflight')
 
   server = await startServer()
   const recovered = await waitFor(async () => {
@@ -160,7 +161,7 @@ try {
   assert.equal(stoppedForReview.checkpoint.nodes.post.effect.state, 'ambiguous')
   assert.equal(mutatingCalls, 1)
 
-  console.log('✓ completed parallel branch was restored without re-execution')
+  console.log('✓ committed file effect was reconciled after a deterministic post-write crash without re-execution')
   console.log('✓ interrupted computational branch was retried with a fenced second attempt')
   console.log('✓ logical execution identity survived SIGKILL and automatic restart recovery')
   console.log('✓ uncertain mutating HTTP effect stopped for review without a blind retry')

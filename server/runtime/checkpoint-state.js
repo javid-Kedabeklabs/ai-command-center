@@ -119,13 +119,13 @@ function requireCurrentAttempt(node, attemptId) {
   if (node.state !== 'running' || !node.activeAttempt || node.activeAttempt.id !== attemptId) throw new Error(`stale or inactive attempt for ${node.nodeId}`)
 }
 
-export function prepareEffect(snapshot, nodeId, attemptId, { requestHash, operationKey } = {}) {
+export function prepareEffect(snapshot, nodeId, attemptId, { requestHash, operationKey, reconciliation = null, output = undefined } = {}) {
   return next(snapshot, copy => {
     const node = assertNode(copy, nodeId)
     requireCurrentAttempt(node, attemptId)
     if (!requestHash) throw new Error(`effect for ${nodeId} requires a request hash`)
     node.activeAttempt.phase = 'effect_prepared'
-    node.effect = { operationKey: operationKey || effectOperationKey(node.execKey), requestHash, state: 'prepared' }
+    node.effect = { operationKey: operationKey || effectOperationKey(node.execKey), requestHash, state: 'prepared', ...(reconciliation ? { reconciliation: clone(reconciliation) } : {}), ...(output !== undefined ? { output } : {}) }
   })
 }
 
@@ -139,14 +139,17 @@ export function markEffectInflight(snapshot, nodeId, attemptId) {
   })
 }
 
-export function confirmEffect(snapshot, nodeId, attemptId, receiptRef) {
+export function confirmEffect(snapshot, nodeId, attemptId, receipt) {
   return next(snapshot, copy => {
     const node = assertNode(copy, nodeId)
     requireCurrentAttempt(node, attemptId)
     if (!['inflight', 'prepared'].includes(node.effect?.state)) throw new Error(`effect for ${nodeId} cannot be confirmed`)
     node.activeAttempt.phase = 'effect_confirmed'
     node.effect.state = 'confirmed'
-    node.effect.receiptRef = receiptRef || null
+    const detail = receipt && typeof receipt === 'object' ? receipt : { receiptRef: receipt }
+    node.effect.receiptRef = detail.receiptRef || null
+    if (detail.output !== undefined) node.effect.output = detail.output
+    if (detail.outputHash) node.effect.outputHash = detail.outputHash
   })
 }
 
@@ -203,11 +206,19 @@ export function recoverCheckpoint(snapshot, { runtimeEpoch = crypto.randomUUID()
     for (const node of Object.values(copy.nodes)) {
       if (node.state !== 'running') continue
       const decision = reconcile[node.nodeId]
-      if (node.effect?.state === 'confirmed' && decision === 'confirmed') {
+      if (node.effect?.state === 'confirmed') {
         node.state = 'succeeded'
+        if (node.effect.output !== undefined) copy.outputs[node.nodeId] = node.effect.output
+        node.outputHash = node.effect.outputHash || digest(node.effect.output ?? '')
       } else if (node.effect?.state === 'inflight') {
         node.state = decision === 'absent' ? 'pending' : decision === 'confirmed' ? 'succeeded' : 'needs_review'
-        if (node.state === 'needs_review') node.effect.state = 'ambiguous'
+        if (node.state === 'succeeded') {
+          node.effect.state = 'confirmed'
+          if (node.effect.output !== undefined) copy.outputs[node.nodeId] = node.effect.output
+          node.outputHash = node.effect.outputHash || digest(node.effect.output ?? '')
+        } else if (node.state === 'needs_review') node.effect.state = 'ambiguous'
+      } else if (node.effect?.state === 'prepared') {
+        node.state = 'pending'
       } else if (unsafe.has(node.nodeId)) {
         node.state = 'needs_review'
         node.effect ||= { operationKey: effectOperationKey(node.execKey), requestHash: node.inputHash || 'legacy-unknown', state: 'ambiguous' }

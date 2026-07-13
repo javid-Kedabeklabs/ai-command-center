@@ -37,6 +37,18 @@ let confirmed = confirmEffect(checkpoint, 'a', 'attempt-a1', 'receipt:a')
 confirmed = completeNode(confirmed, 'a', 'attempt-a1', { output: 'done-a' })
 check(confirmed.nodes.a.state === 'succeeded' && confirmed.outputs.a === 'done-a', 'confirmed effect and output commit atomically as succeeded')
 
+let preparedOnly = claimNode(createCheckpoint(identity), 'a', { inputHash: 'input-a', attemptId: 'attempt-a1' })
+preparedOnly = prepareEffect(preparedOnly, 'a', 'attempt-a1', { requestHash: 'request-a', reconciliation: { kind: 'fixture' } })
+preparedOnly = recoverCheckpoint(preparedOnly, { runtimeEpoch: 'epoch-2', unsafeNodeIds: ['a'] })
+check(preparedOnly.nodes.a.state === 'pending', 'prepared effect is safe to retry because dispatch was not authorized')
+
+let confirmedBeforeCommit = claimNode(createCheckpoint(identity), 'a', { inputHash: 'input-a', attemptId: 'attempt-a1' })
+confirmedBeforeCommit = prepareEffect(confirmedBeforeCommit, 'a', 'attempt-a1', { requestHash: 'request-a' })
+confirmedBeforeCommit = markEffectInflight(confirmedBeforeCommit, 'a', 'attempt-a1')
+confirmedBeforeCommit = confirmEffect(confirmedBeforeCommit, 'a', 'attempt-a1', { receiptRef: 'receipt:a', output: 'recovered-a' })
+confirmedBeforeCommit = recoverCheckpoint(confirmedBeforeCommit, { runtimeEpoch: 'epoch-2', unsafeNodeIds: ['a'] })
+check(confirmedBeforeCommit.nodes.a.state === 'succeeded' && confirmedBeforeCommit.outputs.a === 'recovered-a', 'confirmed effect finalizes after restart without reissue')
+
 let computational = claimNode(createCheckpoint(identity), 'b', { inputHash: 'input-b', attemptId: 'attempt-b1' })
 computational = recoverCheckpoint(computational, { runtimeEpoch: 'epoch-2' })
 check(computational.nodes.b.state === 'pending', 'crashed computation without an external effect can retry')
