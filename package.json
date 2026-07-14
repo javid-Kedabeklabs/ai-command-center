@@ -30,6 +30,7 @@
     "release:lifecycle": "node scripts/release-lifecycle.mjs",
     "test:release-lifecycle": "node scripts/release-lifecycle-tests.mjs",
     "service": "node scripts/product-launch-agent.mjs",
+    "collaboration:prepare": "node scripts/collaboration/prepare-task-packet.mjs",
     "test:service": "node scripts/product-launch-agent-tests.mjs",
     "verify:release": "node scripts/verify-release.mjs",
     "test:browser": "playwright test",

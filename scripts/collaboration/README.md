@@ -8,6 +8,7 @@ The audited installation is Claude Code 2.1.207. Its strongest supported effort 
 
 ## Commands
 
+- `npm run collaboration:prepare < task-draft.json > prepared-packet.json` runs only from the canonical repository root. It resolves the exact reviewed commit, rejects dirty source while tolerating excluded runtime data, hashes committed authority and acceptance blobs, completes schema v3, validates it through the same dispatch contract verifier, and emits a deterministic packet plus a nondispatch receipt. It never queues, dispatches, signs, or writes repository state.
 - `./scripts/collaboration/claude-doctor.sh` performs a read-only installation, capability, authentication-state, Git, disk, worktree, and process audit. Authentication output is reduced to a boolean, a coarse method, and a coarse subscription class; raw authentication output, account identifiers, and secrets are never printed or stored.
 - `./scripts/collaboration/claude-status.sh` defensively reads the three versioned collaboration state files and prints only bounded task, worker, model, capacity, and count fields. It never prints raw logs, prompts, authentication output, or error strings.
 - `./scripts/collaboration/claude-stop.sh <task-id>` writes a bounded stop-at-safe-boundary request. Add `--signal` only for an emergency stop; the script refuses unless the registered active worker, repository, task-named worktree, Claude PID, process CWD, and optional owned process group all match.

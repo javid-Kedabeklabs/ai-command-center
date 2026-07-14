@@ -32,6 +32,7 @@ const gates = [
   ['live agent migration and rollback', process.execPath, ['scripts/agent-architecture-live-tests.mjs']],
   ['collaboration persistence and API', process.execPath, ['scripts/collaboration-api-tests.mjs']],
   ['collaboration contract freeze', process.execPath, ['scripts/collaboration-contract-tests.mjs']],
+  ['collaboration packet preparation', process.execPath, ['scripts/collaboration-packet-preparer-tests.mjs']],
   ['collaboration dispatch receipts', process.execPath, ['scripts/collaboration-dispatcher-tests.mjs']],
   ['accepted delivery metrics', process.execPath, ['scripts/collaboration-metrics-tests.mjs']],
   ['TypeScript', 'npx', ['tsc', '--noEmit']],

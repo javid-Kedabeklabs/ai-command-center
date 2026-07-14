@@ -3,6 +3,7 @@
 ## Unreleased — autonomous implementation contract
 
 - Hardened Fable delegation with authority-complete packet v3, content-addressed acceptance and dispatch evidence, measured paired-control eligibility, and explicit unsigned-attestation truthfulness.
+- Added deterministic read-only packet preparation so collaboration authority hashes are derived from reviewed Git blobs rather than entered manually.
 
 - Verified recovery baseline and repository-managed Codex supervisor.
 - Added schema-v2 lossless migration, typed ports, runtime schema validation, and previews.
