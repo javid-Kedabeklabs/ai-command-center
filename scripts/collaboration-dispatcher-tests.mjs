@@ -10,6 +10,7 @@ import { createLiveCollaborationDispatch } from '../server/collaboration/live-di
 import { createCollaborationProcessManager } from '../server/collaboration/process-manager.js'
 import { createCollaborationTaskStore } from '../server/collaboration/task-store.js'
 import { createWorktreeManager } from '../server/collaboration/worktree-manager.js'
+import { collaborationContractPack } from './fixtures/collaboration-contract-pack.mjs'
 
 const fixture = fs.realpathSync(new URL('./fixtures/collaboration-runner/fixture-claude.mjs', import.meta.url).pathname)
 fs.chmodSync(fixture, 0o700)
@@ -28,7 +29,7 @@ const task = (root, taskId, readOnly = false, overrides = {}) => {
   const baseSha = git(root, ['rev-parse', 'HEAD']), contractPath = '.gitignore'
   const contractHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, contractPath))).digest('hex')
   return ({
-  schemaVersion: 2, taskId, title: 'Dispatcher fixture', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
+  schemaVersion: 3, taskId, title: 'Dispatcher fixture', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
   createdBy: 'codex', assignedWorker: 'claude-fable', taskType: readOnly ? 'READ_ONLY_AUDIT' : 'IMPLEMENTATION',
   objective: readOnly ? 'Inspect the bounded fixture without changing files.' : 'Create one bounded fixture file and commit it.',
   background: 'The deterministic fixture proves dispatch receipts without consuming model capacity.', acceptanceCriteria: ['Return one provenance-bound result.'],
@@ -36,7 +37,7 @@ const task = (root, taskId, readOnly = false, overrides = {}) => {
   permissionProfile: readOnly ? 'READ_ONLY_ADVISOR' : 'WORKTREE_IMPLEMENTATION', modelPolicy: { primary: 'fable', fallback: 'sonnet', effort: 'max' },
   maxTurns: 12, timeoutSeconds: 30, allowSubagents: false, allowNetwork: false, requiresCommit: !readOnly,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: !readOnly, risks: true },
-  contractPack: { reviewedBaseSha: baseSha, acceptanceTestCommitSha: baseSha, contractFiles: [{ path: contractPath, sha256: contractHash }], scenarioIds: ['DISPATCH-01'], maxChangedFiles: readOnly ? 0 : 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
+  contractPack: collaborationContractPack({ baseSha, path: contractPath, sha256: contractHash, scenarioIds: ['DISPATCH-01'], maxChangedFiles: readOnly ? 0 : 25 }),
   ...overrides,
 }) }
 const harness = root => {

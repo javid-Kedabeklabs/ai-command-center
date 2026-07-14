@@ -2,6 +2,8 @@
 
 Living document. Updated at each phase.
 
+Collaboration hardening advanced to packet schema v3 on 2026-07-13: authority categories are explicitly bound or forbidden, scenarios have hashed acceptance identities, dispatch emits content-addressed evidence, and planning estimates cannot masquerade as Codex controls. Attestations remain explicitly unsigned pending an owner-approved trust root.
+
 ## Autonomous implementation contract (2026-07-13)
 
 | Phase | Status | Evidence |

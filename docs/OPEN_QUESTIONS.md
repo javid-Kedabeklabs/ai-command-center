@@ -36,8 +36,8 @@ Allowed states: `OPEN`, `ANSWERED`, `CLOSED`, `SUPERSEDED`.
 - Owner: Codex
 - Question: After review, rework, and integration overhead, which bounded task classes are genuinely faster with Fable than with Codex?
 - Why it matters: Raw generation speed is not a valid delegation metric; only accepted delivery time without boundary or escaped defects justifies default routing.
-- Current evidence: One real modifying pilot succeeded; the shadow metrics store has insufficient comparable observations for promotion.
-- Next evidence needed: At least twelve accepted comparable observations with baseline estimates and all declared quality thresholds satisfied.
+- Current evidence: One real modifying pilot succeeded; planning estimates are labeled as estimates and excluded from promotion evidence.
+- Next evidence needed: At least twelve dispatched eligible observations, ten first-pass acceptances, and four actual paired Codex controls with all declared quality thresholds satisfied.
 - Resolution evidence: Pending in `/api/collaboration/metrics` and the durable collaboration metrics store.
 
 ## Q-0004 — Does Qwen pre-review measurably reduce lead review cost?
@@ -75,3 +75,27 @@ Allowed states: `OPEN`, `ANSWERED`, `CLOSED`, `SUPERSEDED`.
 - Current evidence: All four live v1 packets are terminal—three `FAILED` pilots and one `COMPLETED` review. None can transition to dispatch.
 - Next evidence needed: None.
 - Resolution evidence: `classifyTaskPacketCompatibility` in `server/collaboration/router.js` now counts only `QUEUED` or `BLOCKED` legacy packets as upgrade-required and preserves terminal v1 records as historical evidence; `scripts/collaboration-api-tests.mjs` verifies the classification.
+
+## Q-0007 — Is authority-and-review bandwidth the real collaboration bottleneck?
+
+- Status: OPEN
+- Opened: 2026-07-13
+- Last reviewed: 2026-07-13
+- Owner: Codex
+- Question: Does Fable free more central-authority time than contract preparation, Qwen interpretation, review, integration, and rescue consume?
+- Why it matters: Faster worker implementation can still delay the release if the scarce Codex authority lane becomes the queue bottleneck.
+- Current evidence: The metrics record review and rework, but there are not yet paired controls or enough observations to model the one-writer queue.
+- Next evidence needed: Record packet preparation, active Codex review, integration, rescue, and accepted-calendar time for paired and prospectively assigned tasks.
+- Resolution evidence: Pending in the collaboration counterfactual ledger.
+
+## Q-0008 — What identity may sign collaboration attestations?
+
+- Status: OPEN
+- Opened: 2026-07-13
+- Last reviewed: 2026-07-13
+- Owner: Project owner and Codex
+- Question: Which local trust root and key lifecycle should sign reviewed-base and dispatch attestations?
+- Why it matters: Packet v3 derives tamper-evident authority, acceptance, base-ready, and dispatch digests, but a digest is not an authenticated signature.
+- Current evidence: Dispatch receipts explicitly report `mode: DIGEST_BOUND_LOCAL` and `signed: false`; no signing authority has been invented.
+- Next evidence needed: Owner-approved local signer identity, protected key storage, rotation/revocation policy, and deterministic signature verification tests.
+- Resolution evidence: Pending.

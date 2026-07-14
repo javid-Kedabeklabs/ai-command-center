@@ -5,6 +5,7 @@ import path from 'node:path'
 import { once } from 'node:events'
 import { createCollaborationProcessManager } from '../server/collaboration/process-manager.js'
 import { createCollaborationTaskStore } from '../server/collaboration/task-store.js'
+import { collaborationContractPack } from './fixtures/collaboration-contract-pack.mjs'
 
 let passed = 0
 const test = async (name, fn) => {
@@ -20,7 +21,7 @@ const tempRepository = () => {
 }
 
 const packet = (taskId = 'claude-state-pilot', overrides = {}) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   taskId,
   title: 'Persist collaboration task',
   status: 'QUEUED',
@@ -45,7 +46,7 @@ const packet = (taskId = 'claude-state-pilot', overrides = {}) => ({
   allowNetwork: false,
   requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
-  contractPack: { reviewedBaseSha: 'a'.repeat(40), acceptanceTestCommitSha: 'a'.repeat(40), contractFiles: [{ path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64) }], scenarioIds: ['STATE-01'], maxChangedFiles: 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
+  contractPack: collaborationContractPack({ baseSha: 'a'.repeat(40), path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64), scenarioIds: ['STATE-01'], maxChangedFiles: 25 }),
   ...overrides,
 })
 

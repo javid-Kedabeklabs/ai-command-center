@@ -10,6 +10,7 @@ import { classifyTaskPacketCompatibility, createCollaborationRouter } from '../s
 import { createCollaborationTaskStore } from '../server/collaboration/task-store.js'
 import { createWorktreeManager } from '../server/collaboration/worktree-manager.js'
 import { createDeliveryMetricsStore } from '../server/collaboration/delivery-metrics.js'
+import { collaborationContractPack } from './fixtures/collaboration-contract-pack.mjs'
 
 const git = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'command-center-collaboration-api-'))
@@ -29,14 +30,14 @@ const base = `http://127.0.0.1:${server.address().port}/api/collaboration`
 const baseSha = git(root, ['rev-parse', 'HEAD'])
 const contractHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'src', 'fixture.txt'))).digest('hex')
 const packet = {
-  schemaVersion: 2, taskId: 'api-fable-task', title: 'Bounded UI implementation', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
+  schemaVersion: 3, taskId: 'api-fable-task', title: 'Bounded UI implementation', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
   createdBy: 'codex', assignedWorker: 'claude-fable', taskType: 'UX_IMPLEMENTATION', objective: 'Implement one bounded UI slice.',
   background: 'The API stores a task packet but never dispatches it automatically.', acceptanceCriteria: ['Packet is validated and durable.'],
   filesAllowed: ['web/src/components/**'], filesForbidden: ['server/**', 'data/**'], readOnlyContextFiles: ['src/fixture.txt'], dependencies: [],
   requiredTests: ['npm run build'], permissionProfile: 'WORKTREE_IMPLEMENTATION', modelPolicy: { primary: 'fable', fallback: 'sonnet', effort: 'max' },
   maxTurns: 20, timeoutSeconds: 600, allowSubagents: false, allowNetwork: false, requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
-  contractPack: { reviewedBaseSha: baseSha, acceptanceTestCommitSha: baseSha, contractFiles: [{ path: 'src/fixture.txt', sha256: contractHash }], scenarioIds: ['API-01'], maxChangedFiles: 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
+  contractPack: collaborationContractPack({ baseSha, path: 'src/fixture.txt', sha256: contractHash, scenarioIds: ['API-01'], maxChangedFiles: 25 }),
 }
 const request = async (route, options) => { const response = await fetch(base + route, options); return { response, body: await response.json() } }
 let passed = 0
@@ -47,13 +48,13 @@ try {
   await test('distinguishes terminal legacy evidence from packets that require upgrade', () => {
     const result = classifyTaskPacketCompatibility([
       { status: 'FAILED', task: { schemaVersion: 1 } }, { status: 'COMPLETED', task: { schemaVersion: 1 } },
-      { status: 'BLOCKED', task: { schemaVersion: 1 } }, { status: 'QUEUED', task: { schemaVersion: 2 } },
+      { status: 'BLOCKED', task: { schemaVersion: 1 } }, { status: 'QUEUED', task: { schemaVersion: 2 } }, { status: 'QUEUED', task: { schemaVersion: 3 } },
     ])
-    assert.deepEqual(result, { contractComplete: 1, legacyRecords: 3, upgradeRequired: 1, historicalLegacy: 2 })
+    assert.deepEqual(result, { contractComplete: 1, legacyRecords: 4, upgradeRequired: 2, historicalLegacy: 2 })
   })
   await test('reports a sanitized non-dispatching control plane', async () => {
     const { response, body } = await request('/status')
-    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.taskPacketContract.currentSchemaVersion, 2); assert.equal(body.taskPacketContract.historicalLegacy, 0); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
+    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.taskPacketContract.currentSchemaVersion, 3); assert.equal(body.taskPacketContract.historicalLegacy, 0); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
     assert.equal(JSON.stringify(body).includes(root), false)
   })
   await test('serves the durable question ledger read-only with exact status filtering', async () => {

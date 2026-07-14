@@ -28,7 +28,7 @@ await test('records one provenance-derived outcome and replays the exact command
   const first = await store.recordOutcome(input, { taskRecord: record, lease: { state: 'INTEGRATED' } })
   const replay = await store.recordOutcome(input, { taskRecord: record, lease: { state: 'INTEGRATED' } })
   assert.equal(first.duplicate, false); assert.equal(replay.duplicate, true); assert.equal(first.observation.calendarLeadSeconds, 100)
-  assert.equal(first.observation.startedAt, clock - 90_000); assert.equal((await store.list()).length, 1)
+  assert.equal(first.observation.startedAt, clock - 90_000); assert.equal(first.observation.planningCodexSeconds, 200); assert.equal(first.observation.controlKind, 'NONE'); assert.equal((await store.list()).length, 1)
   assert.equal((await createDeliveryMetricsStore({ repositoryRoot: dir, now: () => clock }).list()).length, 1)
   await assert.rejects(() => store.recordOutcome({ ...input, reviewActiveSeconds: 601 }, { taskRecord: record, lease: { state: 'INTEGRATED' } }), error => error.code === 'COLLABORATION_METRICS_COMMAND_CONFLICT')
   fs.rmSync(dir, { recursive: true, force: true })
@@ -43,17 +43,34 @@ await test('requires terminal task provenance and explicit modifying-work dispos
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
-await test('keeps routing in shadow mode until measured thresholds pass', async () => {
+await test('never treats planning estimates as Codex control evidence', async () => {
   const dir = root(), clock = 4_000_000, store = createDeliveryMetricsStore({ repositoryRoot: dir, now: () => clock })
   for (let index = 0; index < 20; index++) {
     const id = `metric-sample-${String(index).padStart(2, '0')}`
     await store.recordOutcome(outcome(id, `metric-sample-command-${String(index).padStart(2, '0')}`), { taskRecord: task(id, clock), lease: { state: 'INTEGRATED' } })
   }
   const summary = await store.summary(), group = summary.byTaskClass[0]
-  assert.equal(summary.mode, 'SHADOW_ONLY'); assert.equal(group.recommendation, 'ELIGIBLE_FOR_FABLE_DEFAULT_REVIEW'); assert.equal(group.automaticAuthority, false)
+  assert.equal(summary.mode, 'SHADOW_ONLY'); assert.equal(group.recommendation, 'INSUFFICIENT_OR_NONQUALIFYING_EVIDENCE'); assert.equal(group.automaticAuthority, false)
+  assert.equal(group.planningEstimates, 20); assert.equal(group.actualCodexControls, 0); assert.equal(group.pairedCodexControls, 0)
   assert.equal(summary.qwen.recommendation, 'ELIGIBLE_FOR_QWEN_PREFLIGHT_REVIEW'); assert.equal(summary.qwen.automaticAuthority, false)
   await store.recordDefect({ schemaVersion: 1, commandId: 'metric-defect-command', taskId: 'metric-sample-00', severity: 'S2', attributed: true })
   assert.equal((await store.summary()).byTaskClass[0].recommendation, 'INSUFFICIENT_OR_NONQUALIFYING_EVIDENCE')
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+await test('requires dispatched denominator and actual paired Codex controls for eligibility', async () => {
+  const dir = root(), clock = 5_000_000, store = createDeliveryMetricsStore({ repositoryRoot: dir, now: () => clock })
+  for (let index = 0; index < 4; index++) {
+    const controlId = `codex-control-${String(index).padStart(2, '0')}`
+    await store.recordOutcome(outcome(controlId, `codex-control-command-${String(index).padStart(2, '0')}`, { codexBaselineSeconds: null, qwenReview: null }), { taskRecord: { ...task(controlId, clock, { worker: 'codex' }), createdAt: clock - 200_000 }, lease: { state: 'INTEGRATED' } })
+  }
+  for (let index = 0; index < 12; index++) {
+    const id = `paired-sample-${String(index).padStart(2, '0')}`
+    await store.recordOutcome(outcome(id, `paired-command-${String(index).padStart(2, '0')}`, { controlKind: index < 4 ? 'PAIRED_CODEX_CONTROL' : 'NONE', controlTaskId: index < 4 ? `codex-control-${String(index).padStart(2, '0')}` : undefined }), { taskRecord: task(id, clock), lease: { state: 'INTEGRATED' } })
+  }
+  const group = (await store.summary()).byTaskClass.find(item => item.worker === 'claude-fable')
+  assert.equal(group.actualCodexControls, 4); assert.equal(group.pairedCodexControls, 4)
+  assert.equal(group.recommendation, 'ELIGIBLE_FOR_FABLE_DEFAULT_REVIEW')
   fs.rmSync(dir, { recursive: true, force: true })
 })
 

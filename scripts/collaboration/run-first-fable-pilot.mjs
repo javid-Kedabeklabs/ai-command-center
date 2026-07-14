@@ -7,6 +7,7 @@ import crypto from 'node:crypto'
 import { createClaudeRunner } from '../../server/collaboration/claude-runner.js'
 import { createCollaborationProcessManager } from '../../server/collaboration/process-manager.js'
 import { createWorktreeManager } from '../../server/collaboration/worktree-manager.js'
+import { collaborationContractPack } from '../fixtures/collaboration-contract-pack.mjs'
 
 const root = fs.realpathSync(path.resolve(new URL('../..', import.meta.url).pathname))
 const claude = fs.realpathSync(execFileSync('/bin/zsh', ['-lc', 'command -v claude'], { encoding: 'utf8' }).trim())
@@ -14,7 +15,7 @@ const baseSha = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encodin
 const contractPath = 'web/src/workflowGroupHelpers.ts'
 const contractHash = crypto.createHash('sha256').update(execFileSync('git', ['-C', root, 'show', `${baseSha}:${contractPath}`])).digest('hex')
 const task = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   taskId: 'fable-group-tests-pilot-001',
   title: 'Harden workflow group helper tests',
   status: 'QUEUED',
@@ -44,12 +45,14 @@ const task = {
   allowNetwork: false,
   requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
-  contractPack: { reviewedBaseSha: baseSha, acceptanceTestCommitSha: baseSha, contractFiles: [{ path: contractPath, sha256: contractHash }], scenarioIds: ['GROUP-HELPERS-01', 'GROUP-HELPERS-02', 'GROUP-HELPERS-03'], maxChangedFiles: 1, estimatedCodexSeconds: 10800, stopConditions: ['Stop if any file outside the exact lease is required.', 'Stop if the frozen helper contract differs from the reviewed base.', 'Stop rather than weakening, skipping, or retrying acceptance tests.'] },
+  contractPack: collaborationContractPack({ baseSha, path: contractPath, sha256: contractHash, scenarioIds: ['GROUP-HELPERS-01', 'GROUP-HELPERS-02', 'GROUP-HELPERS-03'], maxChangedFiles: 1, planningCodexSeconds: 10800 }),
 }
 const profile = {
   version: '2.1.207',
   flags: { print: true, model: true, fallbackModel: true, effort: true, permissionMode: true, outputFormat: true, verbose: true, jsonSchema: true, allowedTools: true, disallowedTools: true, settingSources: true, strictMcpConfig: true, mcpConfig: true },
 }
+
+throw Object.assign(new Error('This one-off pilot is retired: schema-v3 work must be queued through the authority-complete task store and verified dispatcher.'), { code: 'COLLABORATION_PILOT_RETIRED' })
 
 const manager = createWorktreeManager({ repositoryRoot: root })
 const worktree = manager.create({ taskId: task.taskId, baseSha, branchName: `claude/${task.taskId}`, refuseDirtyPrimary: false, requireHeadBase: true })

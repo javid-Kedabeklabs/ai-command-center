@@ -14,6 +14,7 @@ import {
   boundedBackoffMs, classifyCapacityError, createCapacityState,
   resolveModelPolicy, updateCapacityState,
 } from '../server/collaboration/capacity-manager.js'
+import { collaborationContractPack } from './fixtures/collaboration-contract-pack.mjs'
 
 let passed = 0
 const test = async (name, fn) => {
@@ -23,7 +24,7 @@ const test = async (name, fn) => {
 }
 
 const baseTask = (overrides = {}) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   taskId: 'claude-ui-pilot',
   title: 'Implement UI pilot',
   status: 'QUEUED',
@@ -48,7 +49,7 @@ const baseTask = (overrides = {}) => ({
   allowNetwork: false,
   requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
-  contractPack: { reviewedBaseSha: 'a'.repeat(40), acceptanceTestCommitSha: 'a'.repeat(40), contractFiles: [{ path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64) }], scenarioIds: ['COLLAB-01'], maxChangedFiles: 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
+  contractPack: collaborationContractPack({ baseSha: 'a'.repeat(40), path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64), scenarioIds: ['COLLAB-01'], maxChangedFiles: 25 }),
   ...overrides,
 })
 
@@ -75,14 +76,14 @@ await test('accepts a correctly restricted read-only task', () => {
 })
 
 await test('rejects future versions, unknown fields, and numeric bounds', () => {
-  assert.throws(() => validateTaskPacket(baseTask({ schemaVersion: 3 })), /schemaVersion/)
+  assert.throws(() => validateTaskPacket(baseTask({ schemaVersion: 4 })), /schemaVersion/)
   assert.throws(() => validateTaskPacket({ ...baseTask(), surprise: true }), /unsupported field/)
   assert.throws(() => validateTaskPacket(baseTask({ maxTurns: 101 })), /maxTurns/)
   assert.throws(() => validateTaskPacket(baseTask({ timeoutSeconds: 10 })), /timeoutSeconds/)
   assert.throws(() => validateTaskPacket(baseTask({ priority: 1.5 })), /priority/)
 })
 
-await test('reads legacy v1 packets but requires complete contracts for v2', () => {
+await test('reads legacy packets but requires complete authority contracts for v3', () => {
   const { contractPack, ...legacy } = baseTask({ schemaVersion: 1 })
   assert.equal(validateTaskPacket(legacy).schemaVersion, 1)
   assert.throws(() => validateTaskPacket({ ...legacy, contractPack }), /legacy schemaVersion 1/)

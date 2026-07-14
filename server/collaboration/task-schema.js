@@ -1,7 +1,7 @@
 import { patternsOverlap } from './conflict-detector.js'
 
-export const COLLABORATION_TASK_SCHEMA_VERSION = 2
-export const SUPPORTED_COLLABORATION_TASK_SCHEMA_VERSIONS = Object.freeze([1, 2])
+export const COLLABORATION_TASK_SCHEMA_VERSION = 3
+export const SUPPORTED_COLLABORATION_TASK_SCHEMA_VERSIONS = Object.freeze([1, 2, 3])
 
 export const TASK_STATUSES = Object.freeze([
   'QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'BLOCKED', 'FAILED', 'CANCELLED',
@@ -28,8 +28,14 @@ const ROOT_KEYS = new Set([
 ])
 const MODEL_KEYS = new Set(['primary', 'fallback', 'effort'])
 const OUTPUT_KEYS = new Set(['summary', 'filesChanged', 'tests', 'commitSha', 'risks'])
-const CONTRACT_KEYS = new Set(['reviewedBaseSha', 'contractFiles', 'acceptanceTestCommitSha', 'scenarioIds', 'maxChangedFiles', 'estimatedCodexSeconds', 'stopConditions'])
+const CONTRACT_KEYS_V2 = new Set(['reviewedBaseSha', 'contractFiles', 'acceptanceTestCommitSha', 'scenarioIds', 'maxChangedFiles', 'estimatedCodexSeconds', 'stopConditions'])
+const CONTRACT_KEYS_V3 = new Set(['reviewedBaseSha', 'contractFiles', 'acceptanceTestCommitSha', 'scenarioIds', 'maxChangedFiles', 'planningCodexSeconds', 'stopConditions', 'authoritySet', 'acceptanceSet'])
 const CONTRACT_FILE_KEYS = new Set(['path', 'sha256'])
+const AUTHORITY_SET_KEYS = new Set(['productBehavior', 'securityAndCapabilities', 'persistenceSchema', 'semanticPort', 'wireApi', 'designAndCopy', 'acceptanceTests'])
+const AUTHORITY_ENTRY_KEYS = new Set(['disposition', 'paths'])
+const ACCEPTANCE_SET_KEYS = new Set(['tests', 'environment'])
+const ACCEPTANCE_TEST_KEYS = new Set(['id', 'path', 'sha256'])
+const ACCEPTANCE_ENVIRONMENT_KEYS = new Set(['locale', 'timezone', 'clockSeed', 'dataSeed'])
 const FORBIDDEN_PATH_SEGMENTS = new Set(['.git', '.env', '.ssh', '.gnupg', 'node_modules'])
 const SECRET_PATH = /(^|\/)(?:secrets?|credentials?|tokens?)(?:\/|$)|(?:^|\/)(?:\.env)(?:\.|$)/i
 const GLOB_META = /[*?\[\]{}]/
@@ -147,9 +153,9 @@ export function validateTaskPacket(input) {
   if (contradiction) throw new Error(`allowed and forbidden file scopes conflict: ${contradiction.join(' <> ')}`)
 
   let contractPack = null
-  if (input.schemaVersion === 2) {
-    if (!plainObject(input.contractPack)) throw new Error('schemaVersion 2 requires contractPack')
-    rejectUnknownKeys(input.contractPack, CONTRACT_KEYS, 'contractPack')
+  if (input.schemaVersion >= 2) {
+    if (!plainObject(input.contractPack)) throw new Error(`schemaVersion ${input.schemaVersion} requires contractPack`)
+    rejectUnknownKeys(input.contractPack, input.schemaVersion === 2 ? CONTRACT_KEYS_V2 : CONTRACT_KEYS_V3, 'contractPack')
     const sha = (value, label, length = 40) => requireText(value, label, { min: length, max: 64, pattern: /^[a-f0-9]{40,64}$/ })
     const reviewedBaseSha = sha(input.contractPack.reviewedBaseSha, 'contractPack.reviewedBaseSha')
     const acceptanceTestCommitSha = sha(input.contractPack.acceptanceTestCommitSha, 'contractPack.acceptanceTestCommitSha')
@@ -170,9 +176,54 @@ export function validateTaskPacket(input) {
     for (const scenarioId of scenarioIds) if (!/^[A-Z0-9][A-Z0-9._-]{1,99}$/.test(scenarioId)) throw new Error('contractPack.scenarioIds contains an invalid stable scenario id')
     const maxChangedFiles = input.contractPack.maxChangedFiles
     if (!Number.isInteger(maxChangedFiles) || maxChangedFiles < (readOnly ? 0 : 1) || maxChangedFiles > 25 || readOnly && maxChangedFiles !== 0) throw new Error('contractPack.maxChangedFiles is invalid for the task authority')
-    if (!Number.isInteger(input.contractPack.estimatedCodexSeconds) || input.contractPack.estimatedCodexSeconds < 60 || input.contractPack.estimatedCodexSeconds > 604_800) throw new Error('contractPack.estimatedCodexSeconds must be between 60 and 604800')
     const stopConditions = uniqueTextArray(input.contractPack.stopConditions, 'contractPack.stopConditions', { min: 3, max: 30, itemMax: 500 })
-    contractPack = Object.freeze({ reviewedBaseSha, acceptanceTestCommitSha, contractFiles: Object.freeze(contractFiles), scenarioIds: Object.freeze(scenarioIds), maxChangedFiles, estimatedCodexSeconds: input.contractPack.estimatedCodexSeconds, stopConditions: Object.freeze(stopConditions) })
+    if (input.schemaVersion === 2) {
+      if (!Number.isInteger(input.contractPack.estimatedCodexSeconds) || input.contractPack.estimatedCodexSeconds < 60 || input.contractPack.estimatedCodexSeconds > 604_800) throw new Error('contractPack.estimatedCodexSeconds must be between 60 and 604800')
+      contractPack = Object.freeze({ reviewedBaseSha, acceptanceTestCommitSha, contractFiles: Object.freeze(contractFiles), scenarioIds: Object.freeze(scenarioIds), maxChangedFiles, estimatedCodexSeconds: input.contractPack.estimatedCodexSeconds, stopConditions: Object.freeze(stopConditions) })
+    } else {
+      if (!Number.isInteger(input.contractPack.planningCodexSeconds) || input.contractPack.planningCodexSeconds < 60 || input.contractPack.planningCodexSeconds > 604_800) throw new Error('contractPack.planningCodexSeconds must be between 60 and 604800')
+      if (!plainObject(input.contractPack.authoritySet)) throw new Error('contractPack.authoritySet must be an object')
+      rejectUnknownKeys(input.contractPack.authoritySet, AUTHORITY_SET_KEYS, 'contractPack.authoritySet')
+      const authoritySet = {}
+      for (const category of AUTHORITY_SET_KEYS) {
+        const entry = input.contractPack.authoritySet[category]
+        if (!plainObject(entry)) throw new Error(`contractPack.authoritySet.${category} is required`)
+        rejectUnknownKeys(entry, AUTHORITY_ENTRY_KEYS, `contractPack.authoritySet.${category}`)
+        if (!['bound', 'not-applicable-and-forbidden'].includes(entry.disposition)) throw new Error(`contractPack.authoritySet.${category}.disposition is invalid`)
+        const paths = uniqueTextArray(entry.paths, `contractPack.authoritySet.${category}.paths`, { min: entry.disposition === 'bound' ? 1 : 0, max: 30, itemMax: 300 }).map((item, index) => validateRepositoryPattern(item, `contractPack.authoritySet.${category}.paths[${index}]`))
+        if (entry.disposition === 'not-applicable-and-forbidden' && paths.length) throw new Error(`contractPack.authoritySet.${category} cannot bind paths when forbidden`)
+        for (const authorityPath of paths) {
+          if (!seenContractFiles.has(authorityPath)) throw new Error(`authority path must have a frozen contract file hash: ${authorityPath}`)
+        }
+        authoritySet[category] = Object.freeze({ disposition: entry.disposition, paths: Object.freeze(paths) })
+      }
+      if (authoritySet.productBehavior.disposition !== 'bound' || authoritySet.acceptanceTests.disposition !== 'bound') throw new Error('productBehavior and acceptanceTests authority must be bound')
+      if (!plainObject(input.contractPack.acceptanceSet)) throw new Error('contractPack.acceptanceSet must be an object')
+      rejectUnknownKeys(input.contractPack.acceptanceSet, ACCEPTANCE_SET_KEYS, 'contractPack.acceptanceSet')
+      if (!Array.isArray(input.contractPack.acceptanceSet.tests) || input.contractPack.acceptanceSet.tests.length < 1 || input.contractPack.acceptanceSet.tests.length > 30) throw new Error('contractPack.acceptanceSet.tests must contain between 1 and 30 tests')
+      const acceptanceIds = new Set()
+      const tests = input.contractPack.acceptanceSet.tests.map((item, index) => {
+        if (!plainObject(item)) throw new Error(`contractPack.acceptanceSet.tests[${index}] must be an object`)
+        rejectUnknownKeys(item, ACCEPTANCE_TEST_KEYS, `contractPack.acceptanceSet.tests[${index}]`)
+        const id = requireText(item.id, `contractPack.acceptanceSet.tests[${index}].id`, { max: 100, pattern: /^[A-Z0-9][A-Z0-9._-]{1,99}$/ })
+        const testPath = validateRepositoryPattern(item.path, `contractPack.acceptanceSet.tests[${index}].path`)
+        if (GLOB_META.test(testPath) || testPath.includes(':')) throw new Error('acceptance test paths must be exact safe Git paths')
+        if (acceptanceIds.has(id)) throw new Error('acceptance test ids must be unique')
+        acceptanceIds.add(id)
+        if (!seenContractFiles.has(testPath) || !authoritySet.acceptanceTests.paths.includes(testPath)) throw new Error('every acceptance test must be a frozen acceptanceTests authority path')
+        return Object.freeze({ id, path: testPath, sha256: requireText(item.sha256, `contractPack.acceptanceSet.tests[${index}].sha256`, { min: 64, max: 64, pattern: /^[a-f0-9]{64}$/ }) })
+      })
+      for (const scenarioId of scenarioIds) if (!acceptanceIds.has(scenarioId)) throw new Error(`stable scenario lacks a frozen acceptance test: ${scenarioId}`)
+      if (!plainObject(input.contractPack.acceptanceSet.environment)) throw new Error('contractPack.acceptanceSet.environment must be an object')
+      rejectUnknownKeys(input.contractPack.acceptanceSet.environment, ACCEPTANCE_ENVIRONMENT_KEYS, 'contractPack.acceptanceSet.environment')
+      const environment = Object.freeze({
+        locale: requireText(input.contractPack.acceptanceSet.environment.locale, 'contractPack.acceptanceSet.environment.locale', { max: 50 }),
+        timezone: requireText(input.contractPack.acceptanceSet.environment.timezone, 'contractPack.acceptanceSet.environment.timezone', { max: 100 }),
+        clockSeed: requireText(input.contractPack.acceptanceSet.environment.clockSeed, 'contractPack.acceptanceSet.environment.clockSeed', { max: 100 }),
+        dataSeed: requireText(input.contractPack.acceptanceSet.environment.dataSeed, 'contractPack.acceptanceSet.environment.dataSeed', { max: 100 }),
+      })
+      contractPack = Object.freeze({ reviewedBaseSha, acceptanceTestCommitSha, contractFiles: Object.freeze(contractFiles), scenarioIds: Object.freeze(scenarioIds), maxChangedFiles, planningCodexSeconds: input.contractPack.planningCodexSeconds, stopConditions: Object.freeze(stopConditions), authoritySet: Object.freeze(authoritySet), acceptanceSet: Object.freeze({ tests: Object.freeze(tests), environment }) })
+    }
   } else if (input.contractPack != null) throw new Error('legacy schemaVersion 1 cannot contain contractPack')
 
   return Object.freeze({

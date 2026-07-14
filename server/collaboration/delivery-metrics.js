@@ -7,6 +7,7 @@ export const DELIVERY_METRICS_SCHEMA_VERSION = 1
 const OUTCOMES = new Set(['accepted', 'rejected', 'quarantined', 'cancelled'])
 const DEFECT_SEVERITIES = new Set(['S1', 'S2', 'S3', 'S4'])
 const QWEN_VERDICTS = new Set(['PASS', 'PASS_WITH_NOTES', 'FAIL', 'NOT_RUN'])
+const CONTROL_KINDS = new Set(['NONE', 'ACTUAL_CODEX_CONTROL', 'PAIRED_CODEX_CONTROL'])
 
 const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const inside = (root, candidate) => candidate === root || candidate.startsWith(`${root}${path.sep}`)
@@ -38,18 +39,24 @@ function validateQwenReview(value) {
 
 function validateOutcome(input) {
   if (!plainObject(input)) throw new Error('delivery outcome must be an object')
-  const allowed = new Set(['schemaVersion', 'commandId', 'taskId', 'outcome', 'firstPassAccepted', 'reviewActiveSeconds', 'reworkActiveSeconds', 'reworkCycles', 'automatedGateFailures', 'boundaryViolations', 'codexBaselineSeconds', 'qwenReview'])
+  const allowed = new Set(['schemaVersion', 'commandId', 'taskId', 'outcome', 'firstPassAccepted', 'reviewActiveSeconds', 'reworkActiveSeconds', 'reworkCycles', 'automatedGateFailures', 'boundaryViolations', 'codexBaselineSeconds', 'controlKind', 'codexControlSeconds', 'controlTaskId', 'qwenReview'])
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`delivery outcome contains unsupported field: ${key}`)
   if (input.schemaVersion !== 1) throw new Error('delivery outcome schemaVersion must be 1')
   if (!OUTCOMES.has(input.outcome)) throw new Error('delivery outcome is invalid')
   if (typeof input.firstPassAccepted !== 'boolean') throw new Error('firstPassAccepted must be boolean')
   if (input.outcome !== 'accepted' && input.firstPassAccepted) throw new Error('only an accepted outcome can be first-pass accepted')
+  const controlKind = input.controlKind || 'NONE'
+  if (!CONTROL_KINDS.has(controlKind)) throw new Error('controlKind is invalid')
+  if (controlKind === 'NONE' && (input.codexControlSeconds != null || input.controlTaskId != null)) throw new Error('Codex control evidence requires an actual control kind')
+  if (controlKind !== 'NONE' && input.controlTaskId == null) throw new Error('actual Codex control evidence requires a control task id')
   return {
     schemaVersion: 1, commandId: safeId(input.commandId, 'commandId'), taskId: safeId(input.taskId, 'taskId'), outcome: input.outcome,
     firstPassAccepted: input.firstPassAccepted, reviewActiveSeconds: integer(input.reviewActiveSeconds, 'reviewActiveSeconds'),
     reworkActiveSeconds: integer(input.reworkActiveSeconds, 'reworkActiveSeconds'), reworkCycles: integer(input.reworkCycles, 'reworkCycles', 100),
     automatedGateFailures: integer(input.automatedGateFailures, 'automatedGateFailures', 10_000), boundaryViolations: integer(input.boundaryViolations, 'boundaryViolations', 100),
-    codexBaselineSeconds: input.codexBaselineSeconds == null ? null : integer(input.codexBaselineSeconds, 'codexBaselineSeconds'),
+    planningCodexSeconds: input.codexBaselineSeconds == null ? null : integer(input.codexBaselineSeconds, 'codexBaselineSeconds'),
+    controlKind, codexControlSeconds: input.codexControlSeconds == null ? null : integer(input.codexControlSeconds, 'codexControlSeconds'),
+    controlTaskId: input.controlTaskId == null ? null : safeId(input.controlTaskId, 'controlTaskId'),
     qwenReview: validateQwenReview(input.qwenReview),
   }
 }
@@ -76,7 +83,8 @@ function publicObservation(value) {
     firstPassAccepted: value.firstPassAccepted, readyAt: value.readyAt, startedAt: value.startedAt, handedOffAt: value.handedOffAt,
     acceptedAt: value.acceptedAt, calendarLeadSeconds: value.calendarLeadSeconds, reviewActiveSeconds: value.reviewActiveSeconds,
     reworkActiveSeconds: value.reworkActiveSeconds, reworkCycles: value.reworkCycles, automatedGateFailures: value.automatedGateFailures,
-    boundaryViolations: value.boundaryViolations, codexBaselineSeconds: value.codexBaselineSeconds, qwenReview: value.qwenReview,
+    boundaryViolations: value.boundaryViolations, planningCodexSeconds: value.planningCodexSeconds ?? value.codexBaselineSeconds ?? null,
+    controlKind: value.controlKind || 'NONE', codexControlSeconds: value.codexControlSeconds ?? null, controlTaskId: value.controlTaskId ?? null, qwenReview: value.qwenReview,
   }
 }
 
@@ -90,12 +98,14 @@ function summarizeObservations(observations, defects) {
   const byTaskClass = [...groups.entries()].map(([key, rows]) => {
     const [taskType, worker] = key.split(':'), accepted = rows.filter(item => item.outcome === 'accepted')
     const relevantDefects = defects.filter(item => rows.some(row => row.taskId === item.taskId)), criticalDefects = relevantDefects.filter(item => ['S1', 'S2'].includes(item.severity)).length
-    const baselineRows = accepted.filter(item => item.codexBaselineSeconds != null), medianLead = median(accepted.map(item => item.calendarLeadSeconds)), medianBaseline = median(baselineRows.map(item => item.codexBaselineSeconds))
+    const controlRows = accepted.filter(item => item.controlKind !== 'NONE' && item.codexControlSeconds != null), pairedControls = controlRows.filter(item => item.controlKind === 'PAIRED_CODEX_CONTROL').length
+    const medianLead = median(accepted.map(item => item.calendarLeadSeconds)), medianControl = median(controlRows.map(item => item.codexControlSeconds))
     const firstPassRate = accepted.length ? accepted.filter(item => item.firstPassAccepted).length / accepted.length : null
-    const eligible = accepted.length >= 12 && baselineRows.length >= 12 && firstPassRate >= 0.8 && rows.every(item => item.boundaryViolations === 0) && criticalDefects === 0 && medianLead <= medianBaseline * 0.85
+    const eligible = rows.length >= 12 && accepted.length >= 10 && controlRows.length >= 4 && pairedControls >= 4 && firstPassRate >= 0.8 && rows.every(item => item.boundaryViolations === 0) && criticalDefects === 0 && medianLead <= medianControl * 0.85
     return {
       taskType, worker, observations: rows.length, accepted: accepted.length, firstPassRate,
-      medianCalendarLeadSeconds: medianLead, medianCodexBaselineSeconds: medianBaseline,
+      medianCalendarLeadSeconds: medianLead, planningEstimates: rows.filter(item => item.planningCodexSeconds != null).length,
+      actualCodexControls: controlRows.length, pairedCodexControls: pairedControls, medianActualCodexControlSeconds: medianControl,
       medianReviewSeconds: median(accepted.map(item => item.reviewActiveSeconds)), medianReworkSeconds: median(accepted.map(item => item.reworkActiveSeconds)),
       boundaryViolations: rows.reduce((sum, item) => sum + item.boundaryViolations, 0), criticalDefects,
       recommendation: eligible ? 'ELIGIBLE_FOR_FABLE_DEFAULT_REVIEW' : 'INSUFFICIENT_OR_NONQUALIFYING_EVIDENCE',
@@ -148,6 +158,12 @@ export function createDeliveryMetricsStore({ repositoryRoot, storeFile = path.jo
       const readOnly = taskRecord.task.permissionProfile === 'READ_ONLY_ADVISOR'
       if (value.outcome === 'accepted' && !readOnly && lease?.state !== 'INTEGRATED') throw Object.assign(new Error('accepted modifying work requires an integrated lease receipt'), { code: 'COLLABORATION_METRICS_INTEGRATION_REQUIRED' })
       if (value.outcome === 'rejected' && !readOnly && lease?.state !== 'REJECTED') throw Object.assign(new Error('rejected modifying work requires a rejected lease receipt'), { code: 'COLLABORATION_METRICS_REJECTION_REQUIRED' })
+      if (value.controlKind !== 'NONE') {
+        const control = state.observations[value.controlTaskId]
+        if (!control || control.worker !== 'codex' || control.outcome !== 'accepted') throw Object.assign(new Error('Codex control evidence must reference an accepted recorded Codex task'), { code: 'COLLABORATION_METRICS_CONTROL_REQUIRED' })
+        if (value.codexControlSeconds != null && value.codexControlSeconds !== control.calendarLeadSeconds) throw Object.assign(new Error('submitted Codex control duration does not match durable evidence'), { code: 'COLLABORATION_METRICS_CONTROL_MISMATCH' })
+        value.codexControlSeconds = control.calendarLeadSeconds
+      }
       const readyAt = taskRecord.createdAt, startedAt = taskRecord.dispatch?.startedAt || null
       const terminalReceipt = taskRecord.evidence?.dispatchReceipt || {}, handedOffAt = terminalReceipt.completedAt || terminalReceipt.failedAt || taskRecord.updatedAt
       const acceptedAt = now(), observationId = `observation-${crypto.randomBytes(10).toString('hex')}`

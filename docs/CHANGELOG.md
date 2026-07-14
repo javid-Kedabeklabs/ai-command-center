@@ -2,6 +2,8 @@
 
 ## Unreleased — autonomous implementation contract
 
+- Hardened Fable delegation with authority-complete packet v3, content-addressed acceptance and dispatch evidence, measured paired-control eligibility, and explicit unsigned-attestation truthfulness.
+
 - Verified recovery baseline and repository-managed Codex supervisor.
 - Added schema-v2 lossless migration, typed ports, runtime schema validation, and previews.
 - Added dependency scheduling, bounded parallelism, run scopes, checkpoints, retry branch, cancellation, and restart recovery.

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createClaudeRunner, buildClaudeArgv } from '../server/collaboration/claude-runner.js'
 import { createCollaborationProcessManager } from '../server/collaboration/process-manager.js'
+import { collaborationContractPack } from './fixtures/collaboration-contract-pack.mjs'
 
 const root = fs.realpathSync(new URL('..', import.meta.url).pathname)
 const fixture = fs.realpathSync(new URL('./fixtures/collaboration-runner/fixture-claude.mjs', import.meta.url).pathname)
@@ -15,14 +16,14 @@ const profile = {
 const schema = JSON.parse(fs.readFileSync(new URL('../server/collaboration/result-schema.json', import.meta.url), 'utf8'))
 assert.equal(schema.$schema, undefined)
 const readOnlyTask = (taskId = 'runner-success', overrides = {}) => ({
-  schemaVersion: 2, taskId, title: 'Review fixture safely', status: 'QUEUED', phase: 'PHASE C', priority: 50,
+  schemaVersion: 3, taskId, title: 'Review fixture safely', status: 'QUEUED', phase: 'PHASE C', priority: 50,
   createdBy: 'codex', assignedWorker: 'claude-fable', taskType: 'READ_ONLY_AUDIT',
   objective: 'Inspect one fixture and return a structured read-only result.', background: 'Do not modify any repository files.',
   acceptanceCriteria: ['Return one normalized result.'], filesAllowed: [], filesForbidden: ['data/**'], readOnlyContextFiles: ['docs/MASTER_PLAN.md'], dependencies: [], requiredTests: ['fixture'],
   permissionProfile: 'READ_ONLY_ADVISOR', modelPolicy: { primary: 'fable', fallback: 'sonnet', effort: 'max' },
   maxTurns: 12, timeoutSeconds: 30, allowSubagents: false, allowNetwork: false, requiresCommit: false,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: false, risks: true }, ...overrides,
-  contractPack: { reviewedBaseSha: 'a'.repeat(40), acceptanceTestCommitSha: 'a'.repeat(40), contractFiles: [{ path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64) }], scenarioIds: ['RUNNER-01'], maxChangedFiles: 0, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
+  contractPack: collaborationContractPack({ baseSha: 'a'.repeat(40), path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64), scenarioIds: ['RUNNER-01'], maxChangedFiles: 0 }),
 })
 const implementationTask = taskId => ({ ...readOnlyTask(taskId), taskType: 'IMPLEMENTATION', permissionProfile: 'WORKTREE_IMPLEMENTATION', filesAllowed: ['web/src/components/Pilot/**'], requiresCommit: true, expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true }, contractPack: { ...readOnlyTask(taskId).contractPack, maxChangedFiles: 25 } })
 const manager = () => createCollaborationProcessManager({ repositoryRoot: root, allowedExecutables: [fixture] })
