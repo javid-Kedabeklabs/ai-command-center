@@ -1,5 +1,17 @@
 # Last run summary
 
+## Current completion checkpoint — 2026-07-14
+
+- Completed immutable evaluation baselines, versioned exact-run datasets, SHA-bound artifact/model reports, and replay-safe controlled learning that creates only separate governed Development candidates.
+- Completed portable exact-manifest plugin packages, durable Company World department authoring, versioned install/upgrade/rollback, sanitized packaging, clean install, SBOM, supply-chain, and LaunchAgent gates.
+- Completed copy/paste/duplicate/delete/undo/Escape/search keyboard editing, reduced motion, 1280px responsive containment, macOS canvas visual regression, and truthful unavailable controls.
+- Added disk-full failures before and after rename, explicit post-rename commit-uncertain tagging, 80-cycle bounded DAG soak, 250 checkpoint runs, 2,000-node planning, 300 fsync-backed replacements, and descriptor/temp cleanup.
+- The authoritative release verifier now passes 26/26 gates, including ten live browser/Axe/visual journeys. Latest receipt: `c93bf6510422459c919b873d644fc3ca615a74548c2b9f263210ff969fb600b6`.
+- Current implementation commits include `16de7d9`, `7e83f1a`, and `eef0420`. User-owned dirty `data/` files remain deliberately unstaged and unchanged by source commits.
+- Remaining current-scope operations: commit reconciled docs, publish the exact sanitized review snapshot, reload/verify the host, and obtain an owner-selected license before any open-source claim.
+
+The earlier runtime checkpoint below is retained as historical evidence.
+
 ## Iteration identity
 
 - Timestamp: 2026-07-14T00:17:15Z
@@ -30,7 +42,6 @@
 - Added a typed safe-evidence client and a verified-evidence panel in Run Center. It polls alongside active run detail and shows only linked version, checkpoint, trigger, approval, node, effect, and artifact metadata receipts.
 - Added a live-backend browser acceptance journey that saves a typed workflow, creates its immutable run version, reaches durable approval, submits a revision/subject-bound decision, completes, and verifies safe evidence in Run Center without route mocks.
 - Corrected Workflow Studio's durable approval state handling from the nonexistent `requested` display value to the authoritative `pending` state, restoring approval controls and waiting-node truthfulness.
-- Existing request guarding, deny-wins permissions, symlink-safe filesystem boundaries, immutable versions, typed ports, Keychain references, and trigger-store durability remain in force.
 - Added typed lifecycle, immutable-candidate, approval, deployment, and rollback clients. Candidate-bound runs now carry the exact candidate and workflow-version identity needed for promotable evaluation evidence.
 - Added a Workflow Studio governance panel that derives permitted actions from the persisted lifecycle state, displays exact candidate/version/hash evidence, reports required evaluation receipts, and submits fully bound Development → Testing → Production or rollback requests rather than mutable promotion commands.
 - Added a live-backed browser lifecycle journey proving immutable candidate creation, exact Testing preparation, approval, single-use entry, and persisted approval evidence.
@@ -43,22 +54,27 @@
 - Extended the live approval journey to prove Company World reports `waiting-approval`, the exact active node, approval count, and checkpoint revision before the decision commits.
 - Committed the product journey at `8d231e0` and published sanitized public review snapshot `a6232e9` on `review/current-20260713`; unauthenticated `git ls-remote` confirms it is public.
 - Reloaded the committed implementation through host request `host-5c3fe066d0712a55`; its HTTP 200 health postcondition and receipt SHA-256 `1cd8aa0b89c7ea1c76bfbbd2c4d67bcafe2c126805b08faf1eb6356e2e682be8` passed.
+- Committed the exact lifecycle product integration at `b208d30` and published sanitized snapshot `47b1133` on `review/current-20260713`.
+- Reloaded that implementation through host request `host-7bbbe1f0851a2aee`; its HTTP 200 health postcondition and receipt SHA-256 `d021a45fd22a0e8cb164265868cd9a02f41bae7b85e098c46f10e9f22b212f8e` passed.
+- Committed exact evaluation/plugin evidence at `82ef523` and published sanitized snapshot `826a2a3` on `review/current-20260713`.
+- Reloaded it through host request `host-80f8a0e83c2305c8`; its HTTP 200 health postcondition and receipt SHA-256 `7edf29b10303485b88ef9ce0b53c9157b143882c3f344b6c82217ee3b0c79e19` passed.
+- Committed truthful Company World at `fa3f677` and published sanitized snapshot `ccb3bf3` on `review/current-20260713`.
+- Reloaded it through host request `host-99aa4323b5a11a29`; its HTTP 200 health postcondition and receipt SHA-256 `c667f6e0828e3a6c165291759d4c9fd91c7a4cc9c27942805b2564edfa51a034` passed.
 
 ## Verification
 
 - Pure checkpoint transitions: 20/20; pure run-control transitions: 9/9; subworkflow receipt identity: 5/5.
-- Deterministic live SIGKILL/restart matrix: 6/6.
-- Deterministic subworkflow post-accept crash recovery: 1/1.
-- Deterministic trigger-to-recovered-run receipt linkage: 1/1.
-- Trigger store/idempotency: 17/17.
+- Deterministic live SIGKILL/restart matrix: 6/6. In addition to effect recovery, it proves pending approval identity survives restart with replay-safe decision receipts and explicit manual pause survives restart until generation-checked resume.
 - Safe filesystem boundary: 6/6.
 - Phase 0 contract: 37/37 on isolated state.
+- Deterministic subworkflow post-accept crash recovery: 1/1; deterministic trigger-to-recovered-run receipt linkage: 1/1.
 - Browser Playwright suite: 6/6, including live safe evidence, exact governance/evaluation, and manifest-bound plugin review journeys.
 - Safe evidence canary: 1/1 across durable data, artifacts, detail/evidence APIs, audit, and bundle export; redaction transforms: 11/11.
 - Unified release verification passed all 12 gates with receipt SHA-256 `e5ec50fd239cef4321fde94d09fd47ab9d66b62a0a1e9134e994e97442470142`.
 - Smoke: 30/30 on isolated state.
 - TypeScript and production build: passed.
-- Staged and public-snapshot Gitleaks scans: passed.
+- Staged and complete public-snapshot Gitleaks scans: passed.
+- Committed host: health 200 and a temporary workflow completed with checkpoint schema v2, revision 4, and both nodes succeeded.
 
 ## Learned constraints
 
@@ -72,7 +88,6 @@
 - Trigger watchers are durable behavior, not process-local convenience: boot must restore watchers for already-started deliveries and follow the run recovery chain.
 - Browser approval actions bind to the durable approval ID, revision, and subject hash, never reconstructed display text.
 - Release evidence is a dedicated DTO; internal run/checkpoint objects are not the public evidence contract.
-- Runtime/user files remain outside integration and publication.
 
 ## Next
 

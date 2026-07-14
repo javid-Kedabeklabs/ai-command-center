@@ -5,11 +5,13 @@ Updated: 2026-07-13
 Repository: `/Users/kedabektechlabs/command-center`
 Runtime: `http://localhost:1717`
 
+Completion checkpoint (2026-07-14): phases 0–10 and 14 are verified for the current local-first non-3D scope. Phase 13’s engineering/package lifecycle is verified, but legal open-source release remains blocked on the owner selecting a project license. Phases 11–12 remain explicitly user-deferred. Agent-primitives, collaboration, local-model-factory, and broader Continuous Evolution amendments remain separately tracked enhancements and are not silently counted as completed product scope. The authoritative current proof is `npm run verify:release`; see `docs/COMPLETION_AUDIT.md` rather than the retained beginning-of-contract maturity table below.
+
 Dependency-aware delivery order, parallel preparation, deferred enhancements, estimates, and independent-review prompt are maintained in `docs/PORTFOLIO_PRIORITY_PLAN.md`.
 
 ## 1. Executive assessment
 
-AI Command Center is a working local-first orchestration prototype with an unusually complete Studio shell and a meaningful runtime vertical slice. Its strongest assets are the shared multi-mode graph, AI proposal workflow, Python isolation, observable execution, local model integration, approvals, artifacts, and version history. Its critical weaknesses are the monolithic runner, incomplete canonical schemas, limited permission enforcement, JSON stores without transactional event semantics, incomplete graph-level parallelism/recovery, and an executable catalog substantially narrower than the product vision.
+AI Command Center is now a hardened local-first v1 candidate with optional permission-controlled online connectivity. The paragraph and weighted table below preserve the audited beginning-of-contract assessment for traceability; they are not current status. Current code has additive canonical schemas, per-node recovery, effect receipts, durable controls, exact governance/evaluation evidence, reviewed package lifecycle, trigger recovery, complete current-scope Studio UX, truthful Company World, and deterministic packaging/hardening gates.
 
 The evidence-weighted baseline estimate was **62% of the original 26-part Workflow Studio blueprint at the beginning of this contract**. It is retained as the audited starting point, not silently revised after each feature and not presented as an enterprise-readiness score. Current implementation evidence is maintained in `docs/IMPLEMENTATION_STATUS.md` and `state/last-run-summary.md`. Phase 0 and the latest regression gate include the original 30-check live smoke suite plus 26 focused interrupted-capability checks, TypeScript, production build, Node syntax, and live server startup.
 

@@ -2,12 +2,15 @@
 
 Status: READY
 
-Portfolio order: `docs/PORTFOLIO_PRIORITY_PLAN.md`.
-
-Complete the governed product and operational lifecycle on top of the verified runtime and safe evidence boundary.
+Finalize the current local-first v1 candidate without changing or staging user-owned runtime data.
 
 Immediate work:
-- Complete the packaging inventory and backup/restore receipt verification using the authoritative stores covered by `npm run verify:release`.
-- Add clean-install, upgrade, rollback, SBOM, and vulnerability evidence to the release contract.
 
-Definition of done: governance and extensions bind to immutable version/evidence identities; Company World renders durable truth; clean install, backup/restore, upgrade, rollback, supply-chain, and host lifecycle checks emit reproducible receipts; all existing runtime, crash, browser, and redaction gates remain green.
+- Commit the reconciled observed-behavior documentation and truthful unavailable controls.
+- Build and publish a sanitized `review/current-20260713` snapshot from that exact commit; verify unauthenticated Git access and package exclusions.
+- Reload the product LaunchAgent from the committed local source and verify repository identity, localhost health, hostile-request rejection, and a disposable workflow journey.
+- Ask the owner to select a project license. Until then retain `UNLICENSED` and describe the public branch as a source-available review snapshot, never an open-source release.
+
+After v1 finalization, continue only explicitly active roadmap amendments: Agent Primitive persistence/runtime/UI migration, collaboration leases/UI, measured local-model A/B/routing, and broader Continuous Evolution. Optional embeddings, SQLite, extra models, marketplace breadth, long-document workflows, and 3D remain dependency-gated or deferred.
+
+Definition of done: documentation matches observed behavior; current sanitized public snapshot and current host are independently verified; all 26 release gates pass from the exact committed source; owner-selected license text and metadata are committed before any open-source claim.

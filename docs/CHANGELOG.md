@@ -20,5 +20,9 @@
 - Added a copy-ready repository/skills research brief aligned to the verified architecture, near-term critical path, model-worker roles, dependency/security filters, and deferred 3D scope.
 - Deferred specialized long-form document production by owner direction; engineering documentation remains required, while implementation capacity stays on the core product.
 - Added the Agent Primitive/Role Card architecture amendment and additive 14-primitive schemas, resolver isolation, and nondestructive migration preview; no legacy data migration yet.
+- Added immutable candidate/run-bound evaluation baselines, versioned datasets, artifact-backed visual/accessibility/security/model reports, and replay-safe controlled-learning proposals that can create only separate governed Development candidates.
+- Added portable reviewed plugin packages, durable Company World departments, versioned install/upgrade/rollback, and sanitized package/SBOM/clean-install gates.
+- Completed Workflow Studio copy/paste/duplicate/delete/undo/search/Escape interactions, reduced-motion behavior, responsive containment, live accessibility coverage, and deterministic macOS canvas visual regression.
+- Added disk-full fault injection before and after rename, explicit commit-uncertain write errors, bounded concurrency/checkpoint soak, DAG and atomic-write performance ceilings, and descriptor/temp-file leak checks to the 26-gate release verifier.
 
 This is not a final release; later phases remain open in `docs/IMPLEMENTATION_STATUS.md`.

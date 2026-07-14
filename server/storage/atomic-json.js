@@ -33,7 +33,7 @@ export function atomicWriteFileSync(file, content, options = {}) {
 
   const temporary = `${target}.${process.pid}.${Date.now()}.${crypto.randomBytes(8).toString('hex')}.tmp`
   if (!isInside(temporary, directory)) throw new Error('invalid atomic-write temporary path')
-  let descriptor
+  let descriptor, renamed = false
   try {
     descriptor = fsModule.openSync(temporary, 'wx', options.mode ?? 0o600)
     fsModule.writeFileSync(descriptor, content, options.encoding ? { encoding: options.encoding } : undefined)
@@ -42,6 +42,7 @@ export function atomicWriteFileSync(file, content, options = {}) {
     descriptor = undefined
     options.onStage?.('before-rename', { target, temporary })
     fsModule.renameSync(temporary, target)
+    renamed = true
     options.onStage?.('after-rename', { target, temporary })
     syncDirectory(directory, fsModule)
   } catch (error) {
@@ -49,6 +50,11 @@ export function atomicWriteFileSync(file, content, options = {}) {
       try { fsModule.closeSync(descriptor) } catch {}
     }
     try { fsModule.rmSync(temporary, { force: true }) } catch {}
+    if (renamed && error && typeof error === 'object') {
+      error.atomicWriteCommitted = true
+      error.atomicWriteDurability = 'uncertain'
+      error.atomicWriteTarget = target
+    }
     throw error
   }
 }

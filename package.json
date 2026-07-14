@@ -21,6 +21,7 @@
     "test": "npm run verify:release",
     "test:fast": "node scripts/checkpoint-state-tests.mjs && node scripts/run-control-tests.mjs && node scripts/subworkflow-receipt-tests.mjs && node scripts/redaction-tests.mjs && node scripts/trigger-store-tests.mjs",
     "test:backup": "node scripts/backup-restore-tests.mjs",
+    "test:hardening": "node scripts/hardening-reliability-tests.mjs",
     "backup": "node scripts/backup.mjs",
     "sbom": "node scripts/generate-sbom.mjs",
     "test:package": "node scripts/package-artifact-tests.mjs",

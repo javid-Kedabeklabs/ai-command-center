@@ -4,6 +4,6 @@ AI Command Center is not release-ready until the acceptance checklist in `docs/M
 
 Executable imported packages must remain disabled pending review. Tag only a verified commit, publish checksums and compatibility information, and document rollback.
 
-Release artifacts must pass `npm run verify:release`. The gate verifies runtime recovery, safe evidence, authoritative backup/restore, sanitized package contents, clean packaged installation, CycloneDX SBOM generation, production dependency license/vulnerability review, versioned upgrade/rollback, TypeScript, production build, and the live browser contract.
+Release artifacts must pass `npm run verify:release`. The 26-gate verifier covers runtime/control/trigger recovery, safe evidence, disk-full and sustained-concurrency hardening, measured performance ceilings, authoritative backup/restore, sanitized package contents, clean packaged installation, CycloneDX SBOM generation, production dependency license/vulnerability review, versioned upgrade/rollback, TypeScript, production build, and ten live browser/accessibility/visual journeys.
 
 The project package currently declares `UNLICENSED`. A public source snapshot may be reviewed, but it must not be described as open source or published as an open-source release until the owner selects a license and the exact license text and package metadata are committed.

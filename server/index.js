@@ -34,11 +34,15 @@ import { authorizedHttpHeaders, remoteMcpAuthOptions, validateCredentialSafeHttp
 import { minimalProviderEnvironment } from './secrets/provider-env.js'
 import { atomicWriteJsonSync } from './storage/atomic-json.js'
 import { resolveDataRoot } from './operations/data-root.js'
+import { createDepartment, deleteDepartment, normalizeOrganization } from './organization/departments.js'
+import { pluginPackageChecks, portablePluginPackage, validatePluginCompatibility, verifyPluginSignature } from './plugins/package.js'
 import { governanceAuditDetail, governanceErrorResponse } from './governance/audit.js'
 import { assertOrdinaryWorkflowSave, assertWorkflowDelete, assertWorkflowImport, assertWorkflowRestore, createDevelopmentWorkflowCandidate, preserveWorkflowLifecycle } from './governance/mutations.js'
 import { createCandidateRecord, createCandidateStore, workflowOperationalEvidence } from './governance/candidates.js'
-import { assertExactEvaluationEvidence, createEvaluationRecord, normalizeEvaluationSuite } from './governance/evaluations.js'
+import { assertExactEvaluationEvidence, createEvaluationRecord, evaluationArtifactNames, evaluationSuiteHash, normalizeEvaluationSuite } from './governance/evaluations.js'
+import { createDatasetEvaluationRecord, normalizeEvaluationDataset } from './governance/evaluation-datasets.js'
 import { applyLifecycleTransition, createLifecycleStore, migrateGovernanceLifecycle } from './governance/lifecycle.js'
+import { decideLearningProposal as decideLearningProposalRecord, mergeLearningProposals, normalizeLearningProposal, verifyLearningProposal as verifyLearningProposalRecord } from './learning/proposals.js'
 import { createLocalRequestGuard, requireMutationIntent } from './security/local-request-guard.js'
 import { createRedactor } from './security/redaction.js'
 import { readFileBeneath, resolvePathBeneath, unlinkFileBeneath, writeFileBeneath } from './security/safe-files.js'
@@ -54,6 +58,7 @@ const TRIGGER_HISTORY_FILE = path.join(DATA, 'workflow-trigger-history.json')
 const TRIGGER_INTERNAL_SECRET = crypto.randomBytes(32).toString('hex')
 const PLUGINS_FILE = path.join(DATA, 'plugins.json')
 const EVALUATIONS_FILE = path.join(DATA, 'evaluations.json')
+const EVALUATION_DATASETS_FILE = path.join(DATA, 'evaluation-datasets.json')
 const GOVERNANCE_CANDIDATES_FILE = path.join(DATA, 'governance-candidates.json')
 const GOVERNANCE_LIFECYCLE_FILE = path.join(DATA, 'governance-lifecycle.json')
 const LEARNING_FILE = path.join(DATA, 'learning-proposals.json')
@@ -61,6 +66,7 @@ const WORKFLOW_CACHE_FILE = path.join(DATA, 'workflow-cache.json')
 const IMPORT_PROPOSALS_FILE = path.join(DATA, 'import-proposals.json')
 const COMPONENT_IMPORT_PROPOSALS_FILE = path.join(DATA, 'component-import-proposals.json')
 const SECRET_REFERENCES_FILE = path.join(DATA, 'secret-references.json')
+const ORGANIZATION_FILE = path.join(DATA, 'organization.json')
 const governanceCandidates = createCandidateStore({ file: GOVERNANCE_CANDIDATES_FILE })
 const governanceLifecycle = createLifecycleStore({ file: GOVERNANCE_LIFECYCLE_FILE })
 
@@ -640,9 +646,22 @@ app.get('/api/company-world/state', async (_req, res) => {
     return { id, logicalRunId: run.logicalRunId || id, type: run.type, workflowId: run.workflowId || null, workflowVersion: run.workflowVersion || null, workflowName: run.workflowName || null, agentId: run.agentId || null, agentName: run.agentName || null, status, task: run.task, currentNodeId: activeNodes[0]?.nodeId || null, activeNodes, pendingApprovalCount: pendingApprovals.length, checkpointRevision: run.checkpoint?.revision || null, recoveredFrom: run.resumedFrom || null, activity, started: run.started }
   })
   const workflows = fs.readdirSync(WF_DIR).filter(file => file.endsWith('.json')).map(file => readJson(path.join(WF_DIR, file), null)).filter(Boolean).map(workflow => ({ id: workflow.id, name: workflow.name, project: workflow.project || 'Command Center', environment: workflow.environment || 'development', nodeCount: workflow.nodes?.length || 0 }))
-  const departments = [...new Set(agents.map(agent => agent.department))].map((name, index) => ({ id: safeSlug(name), name, color: ['#8b7cf6','#42b9d0','#44b974','#f0a34a'][index % 4], agentIds: agents.filter(agent => agent.department === name).map(agent => agent.id) }))
+  const organization = normalizeOrganization(readJson(ORGANIZATION_FILE, null), agents)
+  const departments = organization.departments.map(department => ({ ...department, agentIds: agents.filter(agent => agent.department === department.name).map(agent => agent.id) }))
   const resources = await systemInfo()
-  res.json({ generatedAt: Date.now(), agents, departments, activeRuns, workflows, resources: { ram: resources.ram, disk: resources.disk, loadedModels: resources.loaded, modelScheduling: resources.modelScheduling, services: resources.services } })
+  res.json({ generatedAt: Date.now(), organizationRevision: organization.revision, agents, departments, activeRuns, workflows, resources: { ram: resources.ram, disk: resources.disk, loadedModels: resources.loaded, modelScheduling: resources.modelScheduling, services: resources.services } })
+})
+app.post('/api/company-world/departments', requireMutationIntent('organization-change'), (req, res) => {
+  try {
+    const agents = loadAgents(), result = createDepartment(readJson(ORGANIZATION_FILE, null), req.body, agents)
+    writeJson(ORGANIZATION_FILE, result.organization); appendAudit('department_created', { id: result.department.id, revision: result.organization.revision }); res.status(201).json({ ...result.department, revision: result.organization.revision })
+  } catch (error) { res.status(error.status || 400).json({ error: error.message, code: error.code || 'DEPARTMENT_INVALID' }) }
+})
+app.delete('/api/company-world/departments/:id', requireMutationIntent('organization-change'), (req, res) => {
+  try {
+    const organization = deleteDepartment(readJson(ORGANIZATION_FILE, null), req.params.id, loadAgents(), req.query.revision)
+    writeJson(ORGANIZATION_FILE, organization); appendAudit('department_deleted', { id: req.params.id, revision: organization.revision }); res.json({ ok: true, revision: organization.revision })
+  } catch (error) { res.status(error.status || 400).json({ error: error.message, code: error.code || 'DEPARTMENT_INVALID' }) }
 })
 
 // Artifact Center — files produced by runs, with provenance
@@ -1514,7 +1533,7 @@ const BUILTIN_MARKETPLACE = [
 const stablePluginValue = value => Array.isArray(value) ? value.map(stablePluginValue) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stablePluginValue(value[key])])) : value
 const pluginManifestHash = plugin => crypto.createHash('sha256').update(JSON.stringify(stablePluginValue({
   id: plugin.id, name: plugin.name, version: plugin.version, publisher: plugin.publisher || null, license: plugin.license || null,
-  permissions: plugin.permissions || [], dependencies: plugin.dependencies || [], nodes: plugin.nodes || [], provenance: plugin.provenance || null,
+  compatibility: plugin.compatibility || null, permissions: plugin.permissions || [], dependencies: plugin.dependencies || [], nodes: plugin.nodes || [], provenance: plugin.provenance || null,
 }))).digest('hex')
 const pluginReviewReceipt = ({ plugin, reviewedBy, reviewedAt }) => {
   const body = { schemaVersion: 1, id: `plugin-review-${crypto.randomBytes(10).toString('hex')}`, pluginId: plugin.id, pluginVersion: plugin.version, manifestHash: plugin.manifestHash, decision: 'approved', reviewedBy, reviewedAt }
@@ -1522,19 +1541,22 @@ const pluginReviewReceipt = ({ plugin, reviewedBy, reviewedAt }) => {
 }
 app.get('/api/plugins', (_req, res) => {
   const installed = readJson(PLUGINS_FILE, [])
-  res.json(BUILTIN_MARKETPLACE.map(x => ({ ...x, installed: installed.some(i => i.id === x.id), enabled: installed.find(i => i.id === x.id)?.enabled !== false })).concat(installed.filter(i => !BUILTIN_MARKETPLACE.some(x => x.id === i.id))))
+  res.json(BUILTIN_MARKETPLACE.map(x => ({ ...x, installed: installed.some(i => i.id === x.id), enabled: installed.find(i => i.id === x.id)?.enabled !== false })).concat(installed.filter(i => !BUILTIN_MARKETPLACE.some(x => x.id === i.id)).map(item => ({ ...item, installed: true }))))
 })
 app.post('/api/plugins/install', (req, res) => {
   const source = req.body.plugin || BUILTIN_MARKETPLACE.find(x => x.id === req.body.id)
   if (!source || !/^[a-z0-9_-]+$/i.test(source.id || '')) return res.status(400).json({ error: 'valid plugin bundle or marketplace id required' })
   if (!source.version || !source.name) return res.status(400).json({ error: 'plugin manifest requires name and version' })
+  let compatibility, signatureEvidence
+  try { compatibility = validatePluginCompatibility(source.compatibility, '0.1.0') } catch (error) { return res.status(error.status || 400).json({ error: error.message, code: error.code }) }
   const builtin = BUILTIN_MARKETPLACE.some(item => item.id === source.id && item.verified)
   const requestedPermissions = Array.isArray(source.permissions) ? [...new Set(source.permissions.map(String))].slice(0, 30) : []
   const unknownPermission = requestedPermissions.find(capability => !WORKFLOW_CAPABILITIES.includes(capability))
   if (unknownPermission) return res.status(400).json({ error: `unsupported plugin capability: ${unknownPermission}` })
   const installed = readJson(PLUGINS_FILE, []), dependencies = Array.isArray(source.dependencies) ? source.dependencies.slice(0, 50) : [], provenance = source.provenance || { source: builtin ? 'builtin-marketplace' : 'imported-bundle' }
-  const plugin = { ...source, permissions: requestedPermissions, dependencies, provenance, signatureStatus: builtin ? 'verified' : 'unsigned', trustStatus: builtin ? 'verified' : 'untrusted', enabled: builtin, installedAt: Date.now() }
+  const plugin = { ...source, compatibility, permissions: requestedPermissions, dependencies, provenance, signatureStatus: builtin ? 'verified' : 'unsigned', trustStatus: builtin ? 'verified' : 'untrusted', enabled: builtin, installedAt: Date.now() }
   plugin.manifestHash = pluginManifestHash(plugin)
+  try { signatureEvidence = verifyPluginSignature({ manifestHash: plugin.manifestHash, signature: source.signature }); if (!builtin) plugin.signatureStatus = signatureEvidence.status; if (signatureEvidence.keyFingerprint) plugin.signingKeyFingerprint = signatureEvidence.keyFingerprint } catch (error) { return res.status(error.status || 400).json({ error: error.message, code: error.code }) }
   const index = installed.findIndex(x => x.id === plugin.id); if (index >= 0) installed[index] = plugin; else installed.push(plugin)
   writeJson(PLUGINS_FILE, installed)
   if (Array.isArray(plugin.nodes)) for (const node of plugin.nodes) { const list = customNodes(); if (!list.some(x => x.id === node.id)) { list.push({ ...node, enabled: plugin.enabled, pluginId: plugin.id, pluginVersion: plugin.version, manifestHash: plugin.manifestHash, trustStatus: plugin.trustStatus, provenance: { type: 'plugin', pluginId: plugin.id, pluginVersion: plugin.version, manifestHash: plugin.manifestHash, publisher: plugin.publisher || 'unknown' } }); writeJson(CUSTOM_NODES_FILE, list) } }
@@ -1553,15 +1575,61 @@ app.post('/api/plugins/:id/review', (req, res) => {
 })
 app.post('/api/plugins/:id/toggle', (req, res) => { const list = readJson(PLUGINS_FILE, []), item = list.find(x => x.id === req.params.id); if (!item) return res.status(404).json({ error: 'plugin not installed' }); const enable = req.body.enabled !== false; const exactReview = item.trustStatus === 'verified' || (item.trustStatus === 'trusted' && item.reviewReceipt?.manifestHash === item.manifestHash && pluginManifestHash(item) === item.manifestHash); if (enable && !exactReview) return res.status(403).json({ error: 'plugin requires an exact manifest-bound review before enabling' }); item.enabled = enable; writeJson(PLUGINS_FILE, list); const nodes = customNodes().map(node => node.pluginId === item.id ? { ...node, enabled: enable } : node); writeJson(CUSTOM_NODES_FILE, nodes); appendAudit('plugin_toggled', { id: item.id, version: item.version, manifestHash: item.manifestHash, enabled: item.enabled }); res.json(item) })
 app.delete('/api/plugins/:id', (req, res) => { writeJson(PLUGINS_FILE, readJson(PLUGINS_FILE, []).filter(x => x.id !== req.params.id)); writeJson(CUSTOM_NODES_FILE, customNodes().filter(node => node.pluginId !== req.params.id)); appendAudit('plugin_uninstalled', { id: req.params.id }); res.json({ ok: true }) })
+app.get('/api/plugins/:id/export', (req, res) => {
+  const item = readJson(PLUGINS_FILE, []).find(plugin => plugin.id === req.params.id)
+  if (!item) return res.status(404).json({ error: 'plugin not installed' })
+  if (pluginManifestHash(item) !== item.manifestHash) return res.status(409).json({ error: 'plugin manifest integrity check failed', code: 'STALE_PLUGIN_MANIFEST' })
+  res.setHeader('Content-Disposition', `attachment; filename="${item.id}-${item.version}.plugin.json"`); res.json({ schemaVersion: 1, kind: 'ai-command-center/plugin', manifestHash: item.manifestHash, plugin: portablePluginPackage(item) })
+})
+app.post('/api/plugins/:id/test', (req, res) => {
+  const item = readJson(PLUGINS_FILE, []).find(plugin => plugin.id === req.params.id)
+  if (!item) return res.status(404).json({ error: 'plugin not installed' })
+  const result = pluginPackageChecks(item, '0.1.0'), exactManifest = pluginManifestHash(item) === item.manifestHash
+  result.checks.unshift({ name: 'manifest integrity', passed: exactManifest, detail: exactManifest ? item.manifestHash : 'Stored manifest changed' }); result.passed = result.passed && exactManifest
+  appendAudit('plugin_tested', { id: item.id, version: item.version, manifestHash: item.manifestHash, passed: result.passed }); res.status(result.passed ? 200 : 409).json({ ...result, pluginId: item.id, manifestHash: item.manifestHash })
+})
 
+app.get('/api/evaluation-datasets', (_req, res) => res.json(readJson(EVALUATION_DATASETS_FILE, [])))
+app.post('/api/evaluation-datasets', (req, res) => {
+  try {
+    const list = readJson(EVALUATION_DATASETS_FILE, []), id = safeSlug(req.body.id || req.body.name, `dataset-${Date.now()}`), index = list.findIndex(item => item.id === id)
+    const item = normalizeEvaluationDataset({ ...req.body, id }, index >= 0 ? list[index] : null)
+    if (index >= 0) list[index] = item; else list.push(item)
+    writeJson(EVALUATION_DATASETS_FILE, list); appendAudit('evaluation_dataset_saved', { id: item.id, definitionHash: item.definitionHash, cases: item.cases.length }); res.json(item)
+  } catch (error) { res.status(error.status || 400).json({ error: error.message, code: error.code }) }
+})
+app.delete('/api/evaluation-datasets/:id', (req, res) => {
+  if (readJson(EVALUATIONS_FILE, []).some(suite => suite.datasetId === req.params.id)) return res.status(409).json({ error: 'dataset is referenced by an evaluation suite', code: 'EVALUATION_DATASET_IN_USE' })
+  writeJson(EVALUATION_DATASETS_FILE, readJson(EVALUATION_DATASETS_FILE, []).filter(item => item.id !== req.params.id)); appendAudit('evaluation_dataset_deleted', { id: req.params.id }); res.json({ ok: true })
+})
 app.get('/api/evaluations', (_req, res) => res.json(readJson(EVALUATIONS_FILE, [])))
 app.post('/api/evaluations', (req, res) => {
   try {
     const list = readJson(EVALUATIONS_FILE, []), id = safeSlug(req.body.id || req.body.name, `evaluation-${Date.now()}`), index = list.findIndex(item => item.id === id)
+    if (req.body.datasetId && !readJson(EVALUATION_DATASETS_FILE, []).some(item => item.id === req.body.datasetId)) throw Object.assign(new Error('evaluation dataset not found'), { code: 'EVALUATION_DATASET_NOT_FOUND', status: 400 })
     const item = normalizeEvaluationSuite({ ...req.body, id }, index >= 0 ? list[index] : null)
     if (index >= 0) list[index] = item; else list.push(item)
     writeJson(EVALUATIONS_FILE, list); res.json(item)
   } catch (error) { res.status(error?.status || 400).json({ error: error.message, code: error.code }) }
+})
+app.post('/api/evaluations/:id/dataset-run', (req, res) => {
+  const suites = readJson(EVALUATIONS_FILE, []), suite = suites.find(item => item.id === req.params.id)
+  if (!suite) return res.status(404).json({ error: 'evaluation not found' })
+  const dataset = readJson(EVALUATION_DATASETS_FILE, []).find(item => item.id === suite.datasetId)
+  if (!dataset) return res.status(409).json({ error: 'exact versioned dataset not found', code: 'EVALUATION_DATASET_NOT_FOUND' })
+  try {
+    if (suite.definitionHash !== evaluationSuiteHash(suite)) throw Object.assign(new Error('evaluation suite definition hash is stale'), { code: 'STALE_EVALUATION_SUITE', status: 409 })
+    const caseRuns = (Array.isArray(req.body.cases) ? req.body.cases : []).map(item => {
+      const runId = String(item.runId || '')
+      if (!/^[a-z0-9_-]+$/i.test(runId)) throw Object.assign(new Error('invalid dataset run id'), { code: 'INVALID_DATASET_RUN_ID', status: 400 })
+      return { caseId: String(item.caseId || ''), run: readJson(path.join(RUNS_DIR, `${runId}.json`), null) }
+    })
+    const candidateId = String(req.body.candidateId || caseRuns[0]?.run?.candidateId || ''), candidate = candidateId ? governanceCandidates.find(candidateId) : null
+    const record = createDatasetEvaluationRecord({ suite, dataset, caseRuns, candidate })
+    suite.history = [record, ...(suite.history || [])].slice(0, 100); writeJson(EVALUATIONS_FILE, suites)
+    for (const { run } of caseRuns) if (run) { run.evaluations = [record, ...(run.evaluations || [])].slice(0, 100); atomicWriteJsonSync(path.join(RUNS_DIR, `${run.id}.json`), run); const active = runs.get(run.id); if (active) active.evaluations = run.evaluations }
+    appendAudit('evaluation_dataset_run', { evaluation: suite.id, dataset: dataset.id, recordId: record.id, score: record.score, candidateId: record.candidateId, cases: record.runIds.length }); res.json(record)
+  } catch (error) { res.status(error.status || 409).json({ error: error.message, code: error.code }) }
 })
 app.post('/api/evaluations/:id/run', (req, res) => {
   const list = readJson(EVALUATIONS_FILE, []), suite = list.find(x => x.id === req.params.id)
@@ -1571,7 +1639,17 @@ app.post('/api/evaluations/:id/run', (req, res) => {
   if (req.body.runId && Object.prototype.hasOwnProperty.call(req.body, 'output')) return res.status(400).json({ error: 'persisted-run evaluations cannot override the stored run result', code: 'EVALUATION_OUTPUT_OVERRIDE' })
   const candidateId = String(req.body.candidateId || run?.candidateId || ''), candidate = candidateId ? governanceCandidates.find(candidateId) : null
   try {
-    const record = createEvaluationRecord({ suite, value: String(req.body.output ?? run?.result ?? ''), run, candidate })
+    const baseline = suite.baselineRecordId ? (suite.history || []).find(item => item.id === suite.baselineRecordId) : null
+    const artifacts = {}
+    for (const name of evaluationArtifactNames(suite)) {
+      try {
+        if (!run?.dir) throw new Error('persisted run artifact directory required')
+        const raw = readFileBeneath(run.dir, name, 'utf8')
+        if (Buffer.byteLength(raw) > 1024 * 1024) throw new Error('evaluation artifact exceeds 1 MiB')
+        artifacts[name] = { report: JSON.parse(raw), sha256: crypto.createHash('sha256').update(raw).digest('hex') }
+      } catch { artifacts[name] = { report: null, sha256: null } }
+    }
+    const record = createEvaluationRecord({ suite, value: String(req.body.output ?? run?.result ?? ''), run, candidate, baseline, artifacts })
     suite.history = [record, ...(suite.history || [])].slice(0, 100); writeJson(EVALUATIONS_FILE, list); appendAudit('evaluation_run', { evaluation: suite.id, recordId: record.id, score: record.score, promotable: record.promotable, candidateId: record.candidateId })
     if (record.runId && run) {
       run.evaluations = [record, ...(run.evaluations || [])].slice(0, 100)
@@ -1581,42 +1659,62 @@ app.post('/api/evaluations/:id/run', (req, res) => {
     res.json(record)
   } catch (error) { res.status(error?.status || 409).json({ error: error.message, code: error.code }) }
 })
+app.post('/api/evaluations/:id/baseline', (req, res) => {
+  const list = readJson(EVALUATIONS_FILE, []), suite = list.find(item => item.id === req.params.id)
+  if (!suite) return res.status(404).json({ error: 'evaluation not found' })
+  const record = (suite.history || []).find(item => item.id === req.body.recordId)
+  if (!record || record.promotable !== true || record.suiteDefinitionHash !== evaluationSuiteHash(suite)) return res.status(409).json({ error: 'baseline must be exact candidate-bound evidence for the current suite', code: 'INVALID_EVALUATION_BASELINE' })
+  suite.baselineRecordId = record.id; suite.updatedAt = Date.now(); writeJson(EVALUATIONS_FILE, list); appendAudit('evaluation_baseline_set', { evaluation: suite.id, recordId: record.id, recordHash: record.recordHash }); res.json(suite)
+})
 app.delete('/api/evaluations/:id', (req, res) => { writeJson(EVALUATIONS_FILE, readJson(EVALUATIONS_FILE, []).filter(x => x.id !== req.params.id)); res.json({ ok: true }) })
 
 app.get('/api/learning/proposals', (_req, res) => res.json(readJson(LEARNING_FILE, []).map(item => ({ ...item, rationale: String(item.rationale || '').replaceAll(HOME, '~').replaceAll(ROOT, '<repository>') }))))
 app.post('/api/learning/analyze', (req, res) => {
-  const workflowId = String(req.body.workflowId || ''), persisted = fs.readdirSync(RUNS_DIR).filter(f => f.endsWith('.json')).map(f => readJson(path.join(RUNS_DIR, f), null)).filter(r => r?.workflowId === workflowId).sort((a, b) => b.started - a.started).slice(0, 50)
+  const workflowId = String(req.body.workflowId || ''), source = readJson(path.join(WF_DIR, `${workflowId}.json`), null)
+  if (!source) return res.status(404).json({ error: 'source workflow not found' })
+  const sourceWorkflowHash = workflowContentHash(source), persisted = fs.readdirSync(RUNS_DIR).filter(f => f.endsWith('.json')).map(f => readJson(path.join(RUNS_DIR, f), null)).filter(r => r?.workflowId === workflowId).sort((a, b) => b.started - a.started).slice(0, 50)
   const failed = persisted.filter(r => ['failed', 'interrupted'].includes(r.status)), proposals = readJson(LEARNING_FILE, [])
+  const retryable = failed.filter(run => run.status === 'interrupted' || (run.events || []).some(event => event.type === 'error' && /ETIMEDOUT|ECONNRESET|HTTP 429|HTTP 5\d\d|temporar|rate.?limit/i.test(String(event.text || ''))))
   const generated = []
-  if (failed.length >= 2) generated.push({ id: crypto.randomUUID(), workflowId, kind: 'retry-policy', title: 'Increase bounded retry protection', rationale: `${failed.length} of ${persisted.length} recent runs failed or were interrupted.`, patch: { settings: { retries: 2 } }, status: 'proposed', evidence: failed.slice(0, 5).map(r => r.id), createdAt: Date.now() })
+  if (retryable.length >= 2) generated.push({ workflowId, sourceWorkflowHash, kind: 'retry-policy', findingKey: 'repeated-transient-failure-rate', title: 'Increase bounded retry protection', rationale: `${retryable.length} of ${persisted.length} recent runs had interrupted or classified transient failures.`, patch: { settings: { retries: 2 } }, evidence: retryable.slice(0, 5).map(r => r.id) })
   const commonError = failed.flatMap(r => r.events || []).filter(e => e.type === 'error').map(e => e.text).find(Boolean)
-  if (commonError) generated.push({ id: crypto.randomUUID(), workflowId, kind: 'regression-test', title: 'Add a regression evaluation for the repeated failure', rationale: commonError.replaceAll(HOME, '~').replaceAll(ROOT, '<repository>').slice(0, 500), patch: null, status: 'proposed', evidence: failed.slice(0, 5).map(r => r.id), createdAt: Date.now() })
-  writeJson(LEARNING_FILE, [...generated, ...proposals].slice(0, 500)); res.json(generated)
+  if (commonError) { const safeError = commonError.replaceAll(HOME, '~').replaceAll(ROOT, '<repository>').slice(0, 500); generated.push({ workflowId, sourceWorkflowHash, kind: 'regression-test', findingKey: crypto.createHash('sha256').update(safeError).digest('hex'), title: 'Add a regression evaluation for the repeated failure', rationale: safeError, patch: null, evidence: failed.slice(0, 5).map(r => r.id) }) }
+  try {
+    const merged = mergeLearningProposals(proposals, generated)
+    writeJson(LEARNING_FILE, merged.proposals); appendAudit('learning_analysis', { workflowId, observations: persisted.length, failed: failed.length, retryable: retryable.length, proposals: merged.emitted.map(item => item.id) }); res.json(merged.emitted)
+  } catch (error) { res.status(error.status || 400).json({ error: error.message, code: error.code }) }
 })
 app.post('/api/learning/proposals/:id/decision', (req, res) => {
-  const proposals = readJson(LEARNING_FILE, []), item = proposals.find(x => x.id === req.params.id)
+  const proposals = readJson(LEARNING_FILE, []).map(item => normalizeLearningProposal(item, { now: Number(item.updatedAt) || Date.now() })), index = proposals.findIndex(x => x.id === req.params.id), item = proposals[index]
   if (!item) return res.status(404).json({ error: 'proposal not found' })
-  if (item.status !== 'proposed') return res.status(409).json({ error: `proposal is already ${item.status}` })
-  item.status = req.body.decision === 'approved' ? 'approved' : 'rejected'; item.decidedAt = Date.now()
-  if (item.status === 'approved' && item.patch?.settings) {
-    const source = readJson(path.join(WF_DIR, `${item.workflowId}.json`), null)
-    if (!source) return res.status(404).json({ error: 'source workflow not found' })
-    const suffix = crypto.randomBytes(4).toString('hex'), candidateId = `${safeSlug(item.workflowId, 'workflow')}-learning-${suffix}`
-    const candidate = migrateWorkflowDocument(createDevelopmentWorkflowCandidate(source, {
-      id: candidateId,
-      name: `${source.name || source.id} — Learning candidate`,
-      settings: item.patch.settings,
-      status: 'learning-candidate',
-      provenance: { type: 'learning-proposal', proposalId: item.id, sourceWorkflowId: source.id, sourceHash: workflowContentHash(source) },
-    }))
-    const errors = workflowErrors(candidate)
-    if (errors.length) return res.status(409).json({ error: errors.join('; ') })
-    atomicWriteJsonSync(path.join(WF_DIR, `${candidate.id}.json`), candidate)
-    saveWorkflowVersion(WF_VERSION_DIR, candidate)
-    item.applied = false; item.candidateWorkflowId = candidate.id
-    appendAudit('workflow_mutation', governanceAuditDetail({ operation: 'learning-candidate', outcome: 'accepted', workflowId: candidate.id, code: 'LEARNING_CANDIDATE_CREATED', environment: candidate.environment }))
-  }
-  writeJson(LEARNING_FILE, proposals); appendAudit('learning_proposal_decided', { id: item.id, decision: item.status, applied: !!item.applied }); res.json(item)
+  try {
+    const commandId = String(req.body.commandId || `learning-${item.id}-${req.body.decision}`), actor = String(req.body.actor || 'local-owner')
+    const result = decideLearningProposalRecord(item, { decision: req.body.decision, commandId, actor }), decided = result.proposal
+    if (!result.replay && decided.status === 'approved' && decided.patch?.settings) {
+      const source = readJson(path.join(WF_DIR, `${decided.workflowId}.json`), null)
+      if (!source) return res.status(404).json({ error: 'source workflow not found' })
+      const candidatePath = path.join(WF_DIR, `${decided.candidateWorkflowId}.json`), sourceHash = workflowContentHash(source), existing = readJson(candidatePath, null)
+      if (!decided.sourceWorkflowHash || decided.sourceWorkflowHash !== sourceHash) throw Object.assign(new Error('learning proposal source workflow changed after observation'), { code: 'STALE_LEARNING_SOURCE', status: 409 })
+      if (existing && (existing.governance?.provenance?.proposalId !== decided.id || existing.governance?.provenance?.sourceHash !== sourceHash)) throw Object.assign(new Error('learning candidate identity conflicts with existing workflow'), { code: 'LEARNING_CANDIDATE_CONFLICT', status: 409 })
+      if (!existing) {
+        const candidate = migrateWorkflowDocument(createDevelopmentWorkflowCandidate(source, { id: decided.candidateWorkflowId, name: `${source.name || source.id} — Learning candidate`, settings: decided.patch.settings, status: 'learning-candidate', provenance: { type: 'learning-proposal', proposalId: decided.id, proposalFingerprint: decided.fingerprint, sourceWorkflowId: source.id, sourceHash } }))
+        const errors = workflowErrors(candidate); if (errors.length) return res.status(409).json({ error: errors.join('; ') })
+        atomicWriteJsonSync(candidatePath, candidate); saveWorkflowVersion(WF_VERSION_DIR, candidate)
+        appendAudit('workflow_mutation', governanceAuditDetail({ operation: 'learning-candidate', outcome: 'accepted', workflowId: candidate.id, code: 'LEARNING_CANDIDATE_CREATED', environment: candidate.environment }))
+      }
+    }
+    proposals[index] = decided; writeJson(LEARNING_FILE, proposals); appendAudit('learning_proposal_decided', { id: decided.id, decision: decided.status, candidateWorkflowId: decided.candidateWorkflowId || null, commandId, replay: result.replay }); res.json({ ...decided, replay: result.replay })
+  } catch (error) { res.status(error.status || 409).json({ error: error.message, code: error.code }) }
+})
+app.post('/api/learning/proposals/:id/verify', (req, res) => {
+  const proposals = readJson(LEARNING_FILE, []).map(item => normalizeLearningProposal(item, { now: Number(item.updatedAt) || Date.now() })), index = proposals.findIndex(item => item.id === req.params.id), item = proposals[index]
+  if (!item) return res.status(404).json({ error: 'proposal not found' })
+  const suites = readJson(EVALUATIONS_FILE, []), suite = suites.find(entry => (entry.history || []).some(record => record.id === req.body.recordId)), record = suite?.history?.find(entry => entry.id === req.body.recordId), candidate = record?.candidateId ? governanceCandidates.find(record.candidateId) : null
+  try {
+    assertExactEvaluationEvidence({ suite, record, candidate })
+    const commandId = String(req.body.commandId || `learning-verify-${item.id}-${record.id}`), actor = String(req.body.actor || 'local-owner'), result = verifyLearningProposalRecord(item, { suite, record, candidate, commandId, actor })
+    proposals[index] = result.proposal; writeJson(LEARNING_FILE, proposals); appendAudit('learning_proposal_verified', { id: item.id, recordId: record.id, candidateId: candidate.id, commandId, replay: result.replay }); res.json({ ...result.proposal, replay: result.replay })
+  } catch (error) { res.status(error.status || 409).json({ error: error.message, code: error.code }) }
 })
 
 // ---------- template center (built-in, outcome-organized) ----------

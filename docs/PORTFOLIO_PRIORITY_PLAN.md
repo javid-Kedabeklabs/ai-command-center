@@ -29,12 +29,13 @@ At most 20% of active delivery time may be spent on factory improvements while a
 
 ## Current authoritative checkpoint
 
-- Local source: `696b7ca`.
-- Product/security implementation: `d398dbe`.
-- Public sanitized review snapshot: `3caf98b` on `review/current-20260713`.
-- Host: `d398dbe`, reload request `host-272201c8519779d4`, receipt SHA-256 `675f7bf995e09404916883c3829c20c04319beb79ec7e050ffa762d2217b239c`.
-- Verified new boundary: permission composition 9/9 pure + 7/7 live; filesystem 6/6 pure + 2/2 integrated; browser/Axe 90/90; smoke 30/30; hostile Host/Origin and unknown capabilities fail closed.
-- No known implementation, Git, credential, or host blocker.
+- Local implementation through `eef0420`, followed by documentation reconciliation.
+- Last published sanitized review snapshot: `a29da4d67e302b37edf58fc324aac5ef1f1a2ac0` on `review/current-20260713`; final current publication is the next operational task.
+- Last host reload receipt SHA-256: `228c44ab...`; the host is intentionally not claimed current until the final committed snapshot is reloaded and checked.
+- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, and enterprise deterministic hardening are verified by the 26-gate release contract.
+- Only legal open-source designation is blocked: the package remains `UNLICENSED` until the owner selects a license.
+
+The P0–P2 tables below are retained as the dependency rationale that produced the implementation. They are no longer an open-work queue. Current remaining work is documentation/publication/host reconciliation plus the owner’s license choice. P3/P4 remain separately measured or deferred enhancements.
 
 ## Critical-path map
 
@@ -153,10 +154,10 @@ Deferred does not mean forgotten. Each item retains its rationale and unlock con
 
 | Wave | Outcome | Approximate elapsed time | Completion meaning |
 |---|---|---:|---|
-| A | Permission/filesystem/request/redaction/lifecycle foundation | COMPLETE | Committed, public, host-active, focused and broad gates green |
-| B | Per-node recovery, effects, approval/pause, hermetic journey | 9–14 days | Core local-first journey is trustworthy across crash and ambiguity |
-| C | Governance/custom/evaluation/Studio/agents/Operations Map closure | 2–3 weeks | Current product scope is feature-complete and truthful |
-| D | Packaging, backup/restore, soak, security/accessibility/performance RC | 1.5–2.5 weeks | Reproducible, open-source-ready, hardened release candidate |
+| A | Permission/filesystem/request/redaction/lifecycle foundation | COMPLETE | Committed and verified |
+| B | Per-node recovery, effects, approval/pause, hermetic journey | COMPLETE | Core local-first journey is trustworthy across crash and ambiguity |
+| C | Governance/custom/evaluation/Studio/agents/Operations Map closure | COMPLETE FOR CURRENT SCOPE | Current product scope is feature-complete and truthful; agent-primitives amendment remains separate |
+| D | Packaging, backup/restore, soak, security/accessibility/performance RC | ENGINEERING COMPLETE | Reproducible hardened source/package candidate; open-source designation awaits license |
 | E | Controlled evolution and measured AI-factory upgrades | 2–4 weeks, post-RC and incremental | The factory improves from evidence without self-modifying authority |
 
 Waves overlap only at stable interfaces. Estimated total for the complete current non-3D scope is approximately **5–8 weeks**, not including optional P3/P4 experiments that fail their value gates. The secure-v1 critical journey arrives much earlier, at the end of Wave B.

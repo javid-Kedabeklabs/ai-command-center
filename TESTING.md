@@ -1,5 +1,13 @@
 # Testing
 
+The authoritative release command is:
+
+```sh
+npm run verify:release
+```
+
+It runs 26 deterministic gates spanning runtime recovery, replay-safe controls, triggers/subworkflows, secret canaries, disk-full/soak/performance hardening, backup/restore, packaging/install/upgrade/rollback, supply-chain review, evaluations/learning, TypeScript/build, and ten live Playwright/Axe/visual journeys.
+
 The test layers are:
 
 - Pure schema, port, and scheduler fixtures.
@@ -7,22 +15,15 @@ The test layers are:
 - The original live smoke suite.
 - TypeScript checking and Vite production build.
 
-Run the current checkpoint:
+Useful focused checkpoints include:
 
 ```sh
-node scripts/schema-tests.mjs
-node scripts/port-tests.mjs
-node scripts/scheduler-tests.mjs
-node scripts/phase0-contract-tests.mjs
-node scripts/mcp-transport-tests.mjs
-node scripts/trigger-tests.mjs
-node scripts/evaluation-gate-tests.mjs
-node scripts/security-policy-tests.mjs
-node scripts/company-world-tests.mjs
-scripts/autonomy/test-supervisor.sh
-scripts/autonomy/doctor.sh
-bash scripts/smoke.sh
-cd web && npx tsc --noEmit && npm run build
+npm run test:fast
+npm run test:hardening
+npm run test:backup
+npm run test:browser
+npx tsc --noEmit
+npm run build
 ```
 
 Never report a pass without executing the relevant suite against the current server build.
