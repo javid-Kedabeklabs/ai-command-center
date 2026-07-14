@@ -3247,7 +3247,7 @@ const triggerService = createTriggerService({
 
 const localModelFactory = createLocalModelFactory({ repositoryRoot: ROOT, endpoint: LMSTUDIO, concurrency: 4, maxQueue: 100 })
 app.use('/api/local-factory', createLocalFactoryRouter({ factory: localModelFactory, appendAudit }))
-app.use('/api/collaboration', createCollaborationRouter({ taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, metricsStore: collaborationMetricsStore, liveDispatch: liveCollaborationDispatch, appendAudit }))
+app.use('/api/collaboration', createCollaborationRouter({ taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, metricsStore: collaborationMetricsStore, questionLedgerFile: path.join(ROOT, 'docs', 'OPEN_QUESTIONS.md'), liveDispatch: liveCollaborationDispatch, appendAudit }))
 
 // ---------- static UI ----------
 const DIST = path.join(ROOT, 'dist')

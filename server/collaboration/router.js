@@ -1,6 +1,7 @@
 import express from 'express'
 import { requireMutationIntent } from '../security/local-request-guard.js'
 import { COLLABORATION_TASK_SCHEMA_VERSION } from './task-schema.js'
+import { readOpenQuestionLedger } from './open-question-ledger.js'
 
 const publicError = error => ({ error: String(error?.message || error).replace(/\s+/g, ' ').trim().slice(0, 500), code: error?.code || 'COLLABORATION_ERROR' })
 const publicLease = lease => ({
@@ -21,7 +22,7 @@ export function classifyTaskPacketCompatibility(records, currentSchemaVersion = 
   })
 }
 
-export function createCollaborationRouter({ taskStore, worktreeManager, metricsStore = null, liveDispatch = { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }, appendAudit = () => {} } = {}) {
+export function createCollaborationRouter({ taskStore, worktreeManager, metricsStore = null, questionLedgerFile = null, liveDispatch = { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }, appendAudit = () => {} } = {}) {
   if (!taskStore || !worktreeManager) throw new Error('collaboration task store and worktree manager are required')
   const router = express.Router()
 
@@ -71,6 +72,15 @@ export function createCollaborationRouter({ taskStore, worktreeManager, metricsS
     if (!metricsStore) return res.status(503).json({ error: 'collaboration delivery metrics are unavailable', code: 'COLLABORATION_METRICS_UNAVAILABLE' })
     try { res.set('Cache-Control', 'no-store').json({ summary: await metricsStore.summary(), observations: await metricsStore.list() }) }
     catch (error) { res.status(503).json(publicError(error)) }
+  })
+
+  router.get('/questions', (req, res) => {
+    if (!questionLedgerFile) return res.status(503).json({ error: 'open-question ledger is unavailable', code: 'OPEN_QUESTION_LEDGER_UNAVAILABLE' })
+    try {
+      const ledger = readOpenQuestionLedger(questionLedgerFile), requested = req.query.status ? String(req.query.status).toUpperCase() : null
+      if (requested && !Object.hasOwn(ledger.counts, requested)) return res.status(400).json({ error: 'unknown open-question status', code: 'OPEN_QUESTION_STATUS_INVALID' })
+      res.set('Cache-Control', 'no-store').json({ ...ledger, questions: requested ? ledger.questions.filter(item => item.status === requested) : ledger.questions })
+    } catch (error) { res.status(503).set('Cache-Control', 'no-store').json(publicError(error)) }
   })
 
   router.post('/tasks', requireMutationIntent('collaboration-task-change'), async (req, res) => {

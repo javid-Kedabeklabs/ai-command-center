@@ -13,7 +13,7 @@ import {
   type Profile, type ProfilesResp, type Template, type RunSummary as RunSum, type RunDetail, type RunEvidence, type Artifact,
   type KnowledgeSource, type KnowledgeHit, type ToolInfo, type Skill,
   type LocalFactoryStatus, type LocalFactoryTaskSummary,
-  type CollaborationStatus, type CollaborationTaskSummary, type CollaborationLease,
+  type CollaborationStatus, type CollaborationTaskSummary, type CollaborationLease, type OpenQuestion,
 } from './api'
 import { WorkflowStudioV2 } from './WorkflowStudio'
 
@@ -188,11 +188,12 @@ function CollaborationCenter() {
   const [status, setStatus] = useState<CollaborationStatus | null>(null)
   const [tasks, setTasks] = useState<CollaborationTaskSummary[]>([])
   const [leases, setLeases] = useState<CollaborationLease[]>([])
+  const [questions, setQuestions] = useState<OpenQuestion[]>([])
   const [error, setError] = useState('')
   const refresh = useCallback(async () => {
     try {
-      const [nextStatus, nextTasks, nextLeases] = await Promise.all([api.collaborationStatus(), api.collaborationTasks(), api.collaborationLeases()])
-      setStatus(nextStatus); setTasks(nextTasks); setLeases(nextLeases); setError('')
+      const [nextStatus, nextTasks, nextLeases, nextQuestions] = await Promise.all([api.collaborationStatus(), api.collaborationTasks(), api.collaborationLeases(), api.collaborationQuestions('OPEN')])
+      setStatus(nextStatus); setTasks(nextTasks); setLeases(nextLeases); setQuestions(nextQuestions.questions); setError('')
     } catch (value) { setError(String(value)) }
   }, [])
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 3_000); return () => window.clearInterval(timer) }, [refresh])
@@ -210,6 +211,11 @@ function CollaborationCenter() {
     <div className="plain-callout" style={{ marginTop: 16 }}><b>Safe operating boundary</b><p>The dispatch receipt contract is {status?.dispatchContract.verified ? 'verified' : 'checking'} across task, lease, owned process, actual model provenance, inspected commit, and terminal result. Live product dispatch remains disabled until an explicit owner command approves the exact packet and clean base; integration always remains a separate Codex review.</p><small>Automatic integration: {status?.policy.automaticIntegration ? 'enabled' : 'disabled'} · Worktrees: {status?.worktreeEnabled ? 'source checkout ready' : 'unavailable in packaged install'} · Network access: disabled · Subagents: disabled</small></div>
     <div className="plain-callout" style={{ marginTop: 12 }}><b>Contract-complete packets: {status?.taskPacketContract.contractComplete ?? 0}</b><p>New Fable packets must freeze the reviewed Git base, exact contract-file hashes, acceptance-test commit, scenario IDs, changed-file budget, baseline estimate, and stop conditions before dispatch.</p><small>Packet schema v{status?.taskPacketContract.currentSchemaVersion ?? 2} · Dispatchable packets needing explicit upgrade: {status?.taskPacketContract.upgradeRequired ?? 0} · Preserved historical v1 records: {status?.taskPacketContract.historicalLegacy ?? 0}</small></div>
     <div className="plain-callout" style={{ marginTop: 12 }}><b>Measured routing: shadow only</b><p>{status?.metrics.observations || 0} accepted-cycle observations are recorded. Fable and Qwen recommendations remain advisory until the declared sample, first-pass, review-time, boundary, and escaped-defect thresholds pass.</p><small>Fable task classes eligible: {status?.metrics.byTaskClass.filter(item => item.recommendation === 'ELIGIBLE_FOR_FABLE_DEFAULT_REVIEW').length || 0} · Qwen preflight: {status?.metrics.qwen.recommendation === 'ELIGIBLE_FOR_QWEN_PREFLIGHT_REVIEW' ? 'eligible for lead review' : 'insufficient evidence'} · Automatic routing authority: disabled</small></div>
+    <div className="section-title">Open self-challenge questions</div>
+    <div className="rows" aria-label="Open self-challenge questions">
+      {!questions.length && <div className="empty">No material questions are currently open.</div>}
+      {questions.map(item => <div className="row" key={item.id}><span className="dot-s disk" /><div><div className="name">{item.id} · {item.title}</div><div className="meta">Owner: {item.owner} · reviewed {item.lastReviewed}</div><div className="sub">Next evidence: {item.nextEvidenceNeeded}</div></div></div>)}
+    </div>
     <div className="section-title">Fable task packets</div>
     <div className="rows" aria-label="Fable task packets">
       {!tasks.length && <div className="empty">No collaboration task packets yet.</div>}

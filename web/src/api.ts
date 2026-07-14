@@ -77,6 +77,8 @@ export type CollaborationStatus = {
 }
 export type CollaborationTaskSummary = { taskId: string; status: string; relativePath: string; createdAt: number; updatedAt: number; dispatchId?: string | null }
 export type CollaborationLease = { taskId: string; state: string; reason: string | null; branch: string; baseSha: string; createdAt: number; updatedAt: number; endedAt: number | null }
+export type OpenQuestion = { id: string; title: string; status: 'OPEN' | 'ANSWERED' | 'CLOSED' | 'SUPERSEDED'; opened: string; lastReviewed: string; owner: string; question: string; whyItMatters: string; currentEvidence: string; nextEvidenceNeeded: string; resolutionEvidence: string }
+export type OpenQuestionLedger = { schemaVersion: number; counts: Record<OpenQuestion['status'], number>; questions: OpenQuestion[] }
 
 const j = async (r: Response) => {
   if (r.ok) return r.json()
@@ -99,6 +101,7 @@ export const api = {
   collaborationLeases: (): Promise<CollaborationLease[]> => fetch('/api/collaboration/leases', { cache: 'no-store' }).then(j),
   collaborationTask: (taskId: string): Promise<any> => fetch(`/api/collaboration/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' }).then(j),
   collaborationMetrics: (): Promise<any> => fetch('/api/collaboration/metrics', { cache: 'no-store' }).then(j),
+  collaborationQuestions: (status?: OpenQuestion['status']): Promise<OpenQuestionLedger> => fetch(`/api/collaboration/questions${status ? `?status=${encodeURIComponent(status)}` : ''}`, { cache: 'no-store' }).then(j),
   saveCollaborationTask: (packet: Record<string, unknown>): Promise<any> => fetch('/api/collaboration/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Command-Center-Intent': 'collaboration-task-change' }, body: JSON.stringify(packet) }).then(j),
   models: (): Promise<Model[]> => fetch('/api/models').then(j),
   load: (id: string, context: number) =>

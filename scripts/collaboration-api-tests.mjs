@@ -20,8 +20,9 @@ git(root, ['init', '-q']); git(root, ['config', 'user.email', 'fixture@example.i
 const taskStore = createCollaborationTaskStore({ repositoryRoot: root })
 const worktreeManager = createWorktreeManager({ repositoryRoot: root })
 const metricsStore = createDeliveryMetricsStore({ repositoryRoot: root })
+const questionLedgerFile = fs.realpathSync(new URL('../docs/OPEN_QUESTIONS.md', import.meta.url).pathname)
 const audits = []
-const app = express(); app.use(express.json()); app.use('/api/collaboration', createCollaborationRouter({ taskStore, worktreeManager, metricsStore, appendAudit: (...entry) => audits.push(entry) }))
+const app = express(); app.use(express.json()); app.use('/api/collaboration', createCollaborationRouter({ taskStore, worktreeManager, metricsStore, questionLedgerFile, appendAudit: (...entry) => audits.push(entry) }))
 const server = http.createServer(app)
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api/collaboration`
@@ -54,6 +55,12 @@ try {
     const { response, body } = await request('/status')
     assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.taskPacketContract.currentSchemaVersion, 2); assert.equal(body.taskPacketContract.historicalLegacy, 0); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
     assert.equal(JSON.stringify(body).includes(root), false)
+  })
+  await test('serves the durable question ledger read-only with exact status filtering', async () => {
+    const all = await request('/questions'), open = await request('/questions?status=OPEN'), invalid = await request('/questions?status=unknown')
+    assert.equal(all.response.status, 200); assert(all.body.questions.length >= open.body.questions.length); assert(open.body.questions.length > 0)
+    assert(open.body.questions.every(item => item.status === 'OPEN')); assert.equal(invalid.response.status, 400)
+    assert.equal(all.response.headers.get('cache-control'), 'no-store')
   })
   await test('requires explicit mutation intent and validates task packets', async () => {
     const denied = await request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(packet) })
