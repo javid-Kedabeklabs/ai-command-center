@@ -2,6 +2,10 @@
 
 ## Current completion checkpoint — 2026-07-14
 
+- Completed the additive Agent Architecture: fourteen primitives, versioned Role Cards, separate instruction profiles and Agent Instances, exact Workflow Assignments, revisioned atomic persistence, nondestructive snapshot-bound preview, explicit ambiguous-role decisions, idempotent migration, durable rollback, and exact-only reactivation.
+- Added live migration/rollback/assignment APIs, preserved unchanged legacy execution fallback, exposed technical identity in Agent configuration and Company World data, and added an accessible browser migration journey.
+- The authoritative release verifier now passes 29/29 gates with eleven live browser journeys. Receipt: `e57c3ee01e4e7c81c2c4c2a319dfa1cf2d78f70ed3e50df10d0b8059f38c8d3d`.
+
 - Completed immutable evaluation baselines, versioned exact-run datasets, SHA-bound artifact/model reports, and replay-safe controlled learning that creates only separate governed Development candidates.
 - Completed portable exact-manifest plugin packages, durable Company World department authoring, versioned install/upgrade/rollback, sanitized packaging, clean install, SBOM, supply-chain, and LaunchAgent gates.
 - Completed copy/paste/duplicate/delete/undo/Escape/search keyboard editing, reduced motion, 1280px responsive containment, macOS canvas visual regression, and truthful unavailable controls.

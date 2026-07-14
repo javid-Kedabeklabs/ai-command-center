@@ -1,4 +1,5 @@
 import { normalizeRoleCard } from './role-card-schema.js'
+import { AGENT_PRIMITIVE_IDS } from './primitive-schema.js'
 
 export const AGENT_MIGRATION_PREVIEW_VERSION = 1
 
@@ -77,6 +78,37 @@ function proposedRoleCard(agent, primitiveId) {
     provenance: { type: 'legacy-agent-migration-preview', legacyAgentId: String(agent.id || '') },
     status: 'draft',
   })
+}
+
+export function buildLegacyMigrationArtifacts(agent, primitiveId) {
+  if (!agent || typeof agent !== 'object' || Array.isArray(agent)) throw new Error('legacy agent must be an object')
+  if (!AGENT_PRIMITIVE_IDS.has(primitiveId)) throw new Error(`unknown agent primitive: ${primitiveId}`)
+  const legacyAgentId = String(agent.id || '')
+  if (!legacyAgentId) throw new Error('legacy agent ID must be present')
+  const roleCard = proposedRoleCard(agent, primitiveId)
+  return {
+    roleCard,
+    instructionProfile: agent.prompt == null ? null : {
+      id: `migrated-${safe(agent.id || agent.name)}-instructions`,
+      version: 1,
+      instructions: clone(agent.prompt),
+      provenance: { type: 'legacy-agent-migration', legacyAgentId },
+    },
+    agentInstance: {
+      schemaVersion: 1,
+      id: legacyAgentId,
+      roleCardId: roleCard.id,
+      roleCardVersion: roleCard.version,
+      legacyAgentId,
+      projectId: null,
+      currentAssignment: null,
+      currentModel: clone(agent.model ?? null),
+      currentStatus: 'available',
+      runtimeState: {},
+      legacyCompatibility: { folder: clone(agent.folder ?? null), legacyAgentId },
+      provenance: { type: 'legacy-agent-migration', legacyAgentId },
+    },
+  }
 }
 
 export function previewLegacyAgentMigration(legacyAgents) {

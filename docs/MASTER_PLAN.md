@@ -5,7 +5,7 @@ Updated: 2026-07-13
 Repository: `/Users/kedabektechlabs/command-center`
 Runtime: `http://localhost:1717`
 
-Completion checkpoint (2026-07-14): phases 0–10 and 14 are verified for the current local-first non-3D scope. Phase 13’s engineering/package lifecycle is verified, but legal open-source release remains blocked on the owner selecting a project license. Phases 11–12 remain explicitly user-deferred. Agent-primitives, collaboration, local-model-factory, and broader Continuous Evolution amendments remain separately tracked enhancements and are not silently counted as completed product scope. The authoritative current proof is `npm run verify:release`; see `docs/COMPLETION_AUDIT.md` rather than the retained beginning-of-contract maturity table below.
+Completion checkpoint (2026-07-14): phases 0–10 and 14 plus the additive Agent Primitive amendment are verified for the current local-first non-3D scope. Phase 13’s engineering/package lifecycle is verified, but legal open-source release remains blocked on the owner selecting a project license. Phases 11–12 remain explicitly user-deferred. Collaboration, local-model-factory, and broader Continuous Evolution amendments remain separately tracked enhancements and are not silently counted as completed product scope. The authoritative current proof is `npm run verify:release`; see `docs/COMPLETION_AUDIT.md` rather than the retained beginning-of-contract maturity table below.
 
 Dependency-aware delivery order, parallel preparation, deferred enhancements, estimates, and independent-review prompt are maintained in `docs/PORTFOLIO_PRIORITY_PLAN.md`.
 
@@ -281,6 +281,8 @@ Every phase records UI, persistence, runtime, permissions, errors, tests, rollba
 - Current mandatory gap-remediation sequence and acceptance contract: `docs/GOVERNANCE_HARDENING_PLAN.md`.
 
 #### Phase 8A — agent primitives and Role Cards amendment
+
+- Current status: verified. The additive store, migration/rollback APIs, exact assignments, Agent UI, Company World identity, and deterministic release gates are implemented without mutating legacy agent records.
 
 - Additive model: 14 initial reasoning primitives, versioned Role Cards, isolated Agent Instances, and explicit Workflow Assignments.
 - Compatibility: preserve legacy IDs, names, prompts, avatars, tools, skills, permissions, models, and workflow references; preview mappings and flag ambiguity before mutation; retain rollback evidence.

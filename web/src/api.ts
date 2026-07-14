@@ -18,7 +18,11 @@ export type Model = {
   maxContext: number; loadedContext: number | null; downloading: boolean
   estimatedBytes?: number | null
 }
-export type Agent = { id: string; avatar: string; name: string; model: string; prompt: string; folder: string; permissions?: string; skills?: string[]; role?: string; department?: string; manager?: string; contextLimit?: number; tokenBudget?: number; timeBudget?: number; retryBudget?: number }
+export type AgentArchitectureIdentity = { primitiveId: string; roleCardId: string; roleCardVersion: number; agentInstanceId: string; organizationalClass: string; status: string }
+export type Agent = { id: string; avatar: string; name: string; model: string; prompt: string; folder: string; permissions?: string; skills?: string[]; role?: string; department?: string; manager?: string; contextLimit?: number; tokenBudget?: number; timeBudget?: number; retryBudget?: number; architecture?: AgentArchitectureIdentity | null }
+export type AgentMigrationProposal = { legacyAgentId: string; status: 'READY' | 'REVIEW_REQUIRED'; confidence: string; primitiveId: string | null; primitiveCandidates: string[]; ambiguityReasons: string[]; legacySnapshotHash: string; proposedRoleCard: Record<string, unknown> | null; preservedLegacyConfiguration: Agent }
+export type AgentMigrationPreview = { schemaVersion: number; mode: 'preview-only'; mutationPerformed: false; architectureRevision: number; summary: { total: number; ready: number; reviewRequired: number }; proposals: AgentMigrationProposal[] }
+export type AgentArchitectureState = { schemaVersion: number; revision: number; roleCards: Record<string, any>; instructionProfiles: Record<string, any>; agentInstances: Record<string, any>; workflowAssignments: Record<string, any>; migrationReceipts: any[]; primitives: any[] }
 export type Skill = { path: string; name: string; title: string; preview: string }
 export type PermInfo = { key: string; summary: string }
 export type AuditEntry = { t: number; action: string; detail: unknown }
@@ -87,6 +91,10 @@ export const api = {
   download: (name: string) =>
     fetch('/api/models/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(j),
   agents: (): Promise<Agent[]> => fetch('/api/agents').then(j),
+  agentArchitecture: (): Promise<AgentArchitectureState> => fetch('/api/agent-architecture', { cache: 'no-store' }).then(j),
+  agentMigrationPreview: (): Promise<AgentMigrationPreview> => fetch('/api/agents/migration-preview', { cache: 'no-store' }).then(j),
+  migrateAgent: (id: string, body: { primitiveId?: string; expectedLegacyHash: string; expectedRevision: number; commandId: string }): Promise<any> => fetch(`/api/agents/${encodeURIComponent(id)}/migrate`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Command-Center-Intent': 'agent-architecture-change' }, body: JSON.stringify(body) }).then(j),
+  rollbackAgentMigration: (id: string, body: { expectedLegacyHash: string; expectedRevision: number; commandId: string }): Promise<any> => fetch(`/api/agents/${encodeURIComponent(id)}/migration-rollback`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Command-Center-Intent': 'agent-architecture-change' }, body: JSON.stringify(body) }).then(j),
   saveAgent: (a: Partial<Agent>) =>
     fetch('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }).then(j),
   deleteAgent: (id: string) => fetch(`/api/agents/${id}`, { method: 'DELETE' }).then(j),

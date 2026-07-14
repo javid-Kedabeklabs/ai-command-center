@@ -32,6 +32,36 @@ test('keyboard command palette opens and closes without losing workflow access',
   await expect(page.getByLabel('Workflow', { exact: true })).toBeVisible()
 })
 
+test('Agent Architecture migration is explicit, reversible, and preserves ambiguous choices', async ({ page }) => {
+  const editorId = 'browser-migration-editor'
+  await page.request.post('/api/agents', { data: { id: editorId, avatar: '✍️', name: 'Editor', role: 'Editor', department: 'Editorial', model: 'lmstudio/test-writer', prompt: 'Edit carefully.', folder: '.tmp/browser-editor', permissions: 'readonly' } })
+  await page.goto('/?page=agents&onboarding=skip')
+  await expect(page.getByTestId('agent-migration-summary')).toContainText('architecture revision')
+
+  const editorMigration = page.getByTestId(`agent-migration-${editorId}`)
+  await expect(editorMigration).toContainText('Role decision required')
+  const migrateButton = editorMigration.getByRole('button', { name: 'Create versioned architecture' })
+  await expect(migrateButton).toBeDisabled()
+  await editorMigration.getByLabel('Primitive for Editor').selectOption('writer')
+  await expect(migrateButton).toBeEnabled()
+
+  page.once('dialog', dialog => dialog.accept())
+  await migrateButton.click()
+  const identity = page.getByTestId(`agent-architecture-${editorId}`)
+  await expect(identity).toContainText('writer primitive')
+  await identity.click()
+  await expect(identity).toContainText('Role Card: legacy-browser-migration-editor')
+
+  page.once('dialog', dialog => dialog.accept())
+  await identity.getByRole('button', { name: 'Use legacy fallback' }).click()
+  await expect(page.getByTestId(`agent-migration-${editorId}`)).toContainText('Role decision required')
+  await page.request.delete(`/api/agents/${editorId}`)
+
+  const report = await new AxeBuilder({ page }).analyze()
+  const blocking = report.violations.filter(item => item.impact === 'serious' || item.impact === 'critical')
+  expect(blocking, blocking.map(item => `${item.id}: ${item.help}`).join('\n')).toEqual([])
+})
+
 test('keyboard editing, reduced motion, responsive layout, and canvas visuals remain deterministic', async ({ page }) => {
   const workflowId = 'browser-ux-deterministic'
   const workflow = {

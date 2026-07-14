@@ -46,6 +46,8 @@ import { decideLearningProposal as decideLearningProposalRecord, mergeLearningPr
 import { createLocalRequestGuard, requireMutationIntent } from './security/local-request-guard.js'
 import { createRedactor } from './security/redaction.js'
 import { readFileBeneath, resolvePathBeneath, unlinkFileBeneath, writeFileBeneath } from './security/safe-files.js'
+import { createAgentArchitectureStore } from './agents/architecture-store.js'
+import { DEFAULT_AGENT_PRIMITIVES } from './agents/primitive-schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -116,6 +118,8 @@ function safeSlug(value, fallback = 'item') { return String(value || fallback).t
 
 // ---------- agents store ----------
 const AGENTS_FILE = path.join(DATA, 'agents.json')
+const AGENT_ARCHITECTURE_FILE = path.join(DATA, 'agent-architecture.json')
+const agentArchitecture = createAgentArchitectureStore(AGENT_ARCHITECTURE_FILE)
 const WORKSPACE = path.join(HOME, 'agents-workspace')
 
 function seedAgents() {
@@ -137,6 +141,21 @@ function loadAgents() {
   try { return JSON.parse(fs.readFileSync(AGENTS_FILE, 'utf8')) } catch { return seedAgents() }
 }
 function saveAgents(list) { atomicWriteJsonSync(AGENTS_FILE, list) }
+function agentArchitectureIdentity(agent) {
+  const resolved = agentArchitecture.resolveAgent(agent.id)
+  if (!resolved) return null
+  const state = agentArchitecture.read()
+  const instance = state.agentInstances[resolved.agentInstanceId]
+  return {
+    primitiveId: resolved.primitiveId,
+    roleCardId: resolved.roleCardId,
+    roleCardVersion: resolved.roleCardVersion,
+    agentInstanceId: resolved.agentInstanceId,
+    organizationalClass: resolved.organizationalClass,
+    status: instance.currentStatus,
+  }
+}
+function publicAgent(agent) { return { ...agent, architecture: agentArchitectureIdentity(agent) } }
 
 // mirror each Command Center agent as a native OpenCode agent file.
 // Unspecified agents receive the scoped standard preset; unrestricted access must be explicit.
@@ -341,7 +360,46 @@ app.post('/api/chat', async (req, res) => {
 })
 
 // ---------- agents ----------
-app.get('/api/agents', (_req, res) => res.json(loadAgents()))
+app.get('/api/agents', (_req, res) => res.json(loadAgents().map(publicAgent)))
+app.get('/api/agent-architecture', (_req, res) => {
+  const state = agentArchitecture.read()
+  res.set('Cache-Control', 'no-store').json({ ...state, primitives: DEFAULT_AGENT_PRIMITIVES })
+})
+app.get('/api/agents/migration-preview', (_req, res) => {
+  res.set('Cache-Control', 'no-store').json(agentArchitecture.preview(loadAgents()))
+})
+app.post('/api/agents/:id/migrate', requireMutationIntent('agent-architecture-change'), (req, res) => {
+  try {
+    const result = agentArchitecture.migrate({ legacyAgents: loadAgents(), legacyAgentId: req.params.id, primitiveId: req.body.primitiveId || null, expectedLegacyHash: req.body.expectedLegacyHash, expectedRevision: req.body.expectedRevision, commandId: req.body.commandId })
+    appendAudit('agent_architecture_migrated', { legacyAgentId: req.params.id, primitiveId: result.receipt.primitiveId, roleCardId: result.receipt.roleCardId, roleCardVersion: result.receipt.roleCardVersion, agentInstanceId: result.receipt.agentInstanceId, commandId: result.receipt.commandId, receiptHash: result.receipt.receiptHash, replay: result.replayed })
+    res.status(result.replayed ? 200 : 201).json(result)
+  } catch (error) {
+    const status = error.code === 'REVISION_CONFLICT' || /changed after migration preview/.test(error.message) ? 412 : /not found/.test(error.message) ? 404 : /already has|different request|explicit primitive/.test(error.message) ? 409 : 400
+    res.status(status).json({ error: error.message, code: error.code || 'AGENT_MIGRATION_FAILED', currentRevision: error.currentRevision })
+  }
+})
+app.post('/api/agents/:id/migration-rollback', requireMutationIntent('agent-architecture-change'), (req, res) => {
+  try {
+    const result = agentArchitecture.rollback({ legacyAgents: loadAgents(), legacyAgentId: req.params.id, expectedLegacyHash: req.body.expectedLegacyHash, expectedRevision: req.body.expectedRevision, commandId: req.body.commandId })
+    appendAudit('agent_architecture_rolled_back', { legacyAgentId: req.params.id, agentInstanceId: result.receipt.agentInstanceId, commandId: result.receipt.commandId, receiptHash: result.receipt.receiptHash, replay: result.replayed })
+    res.json(result)
+  } catch (error) {
+    const status = error.code === 'REVISION_CONFLICT' || /changed after rollback preview/.test(error.message) ? 412 : /not found/.test(error.message) ? 404 : /different request|no applied migration/.test(error.message) ? 409 : 400
+    res.status(status).json({ error: error.message, code: error.code || 'AGENT_MIGRATION_ROLLBACK_FAILED', currentRevision: error.currentRevision })
+  }
+})
+app.put('/api/workflow-assignments/:id', requireMutationIntent('agent-architecture-change'), (req, res) => {
+  try {
+    const { expectedRevision, ...assignmentInput } = req.body
+    const state = agentArchitecture.putAssignment({ ...assignmentInput, id: req.params.id }, expectedRevision)
+    const assignment = state.workflowAssignments[req.params.id]
+    appendAudit('workflow_assignment_saved', { assignmentId: assignment.id, workflowId: assignment.workflowId, nodeId: assignment.nodeId, agentInstanceId: assignment.agentInstanceId, roleCardId: assignment.roleCardId, roleCardVersion: assignment.roleCardVersion, revision: state.revision })
+    res.json({ assignment, revision: state.revision })
+  } catch (error) {
+    const status = error.code === 'REVISION_CONFLICT' ? 412 : /unavailable/.test(error.message) ? 404 : 400
+    res.status(status).json({ error: error.message, code: error.code || 'WORKFLOW_ASSIGNMENT_FAILED', currentRevision: error.currentRevision })
+  }
+})
 app.post('/api/agents', (req, res) => {
   const list = loadAgents()
   const a = req.body
@@ -352,7 +410,7 @@ app.post('/api/agents', (req, res) => {
   if (i >= 0) list[i] = a; else list.push(a)
   saveAgents(list)
   writeOcAgent(a)
-  res.json(a)
+  res.json(publicAgent(a))
 })
 app.delete('/api/agents/:id', (req, res) => {
   saveAgents(loadAgents().filter(a => a.id !== req.params.id))
@@ -458,7 +516,8 @@ app.post('/api/agents/:id/run', async (req, res) => {
   fs.mkdirSync(agent.folder, { recursive: true })
   writeOcAgent(agent) // keep the native agent file in sync
   const runId = new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomBytes(3).toString('hex')
-  const run = { id: runId, type: 'agent', agentId: agent.id, agentName: agent.name, avatar: agent.avatar, task, status: 'running', dir: agent.folder, events: [], listeners: new Set(), modelAbortController: new AbortController(), started: Date.now() }
+  const architecture = agentArchitectureIdentity(agent)
+  const run = { id: runId, type: 'agent', agentId: agent.id, agentName: agent.name, avatar: agent.avatar, architecture, task, status: 'running', dir: agent.folder, events: [], listeners: new Set(), modelAbortController: new AbortController(), started: Date.now() }
   runs.set(runId, run)
   persistRun(runId, run) // persist at start (durability)
   pushEvent(run, 'info', `▶ ${agent.avatar} ${agent.name} started — model ${agent.model} — folder ${agent.folder}`)
@@ -630,7 +689,7 @@ app.get('/api/runs', (_req, res) => {
   res.json(hist)
 })
 app.get('/api/company-world/state', async (_req, res) => {
-  const agents = loadAgents().map(agent => ({ id: agent.id, name: agent.name, avatar: agent.avatar || '🤖', role: agent.role || agent.name, department: agent.department || 'General Operations', model: agent.model, permissions: agent.permissions || 'standard', skills: agent.skills || [] }))
+  const agents = loadAgents().map(agent => ({ id: agent.id, name: agent.name, avatar: agent.avatar || '🤖', role: agent.role || agent.name, department: agent.department || 'General Operations', model: agent.model, permissions: agent.permissions || 'standard', skills: agent.skills || [], architecture: agentArchitectureIdentity(agent) }))
   const activeRuns = [...runs.entries()].filter(([, run]) => ['running', 'needs_review'].includes(run.status) || run.paused).map(([id, run]) => {
     const checkpointNodes = Object.values(run.checkpoint?.nodes || {})
     const activeNodes = checkpointNodes.filter(node => ['running', 'waiting', 'needs_review'].includes(node.state)).map(node => ({ nodeId: node.nodeId, state: node.state, attemptsStarted: node.attemptsStarted, waitKind: node.wait?.kind || null, effectState: node.effect?.state || null }))

@@ -7,7 +7,7 @@ import {
 } from '@xyflow/react'
 import {
   api, streamChat, subscribeEvents, subscribeRun,
-  type SystemInfo, type Model, type Agent, type RunSummary, type RunEvent,
+  type SystemInfo, type Model, type Agent, type AgentMigrationPreview, type RunSummary, type RunEvent,
   type BrainFile, type BrainGraph, type StudioModel,
   subscribeWfRun, type AllModel, type Provider, type Workflow, type WfSummary,
   type Profile, type ProfilesResp, type Template, type RunSummary as RunSum, type RunDetail, type RunEvidence, type Artifact,
@@ -699,9 +699,9 @@ function Onboarding({ onDone }: { onDone: (mode: Mode | null, page: Page | null)
 
 function ModeSelector({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => void }) {
   return (
-    <div className="mode-seg" role="tablist" title="Interface complexity — changes what's shown, never what your workflows do">
+    <div className="mode-seg" role="tablist" aria-label="Complexity mode" title="Interface complexity — changes what's shown, never what your workflows do">
       {MODES.map(m => (
-        <button key={m.key} className={`mode-opt ${mode === m.key ? 'on' : ''}`} onClick={() => onChange(m.key)} title={m.hint}>
+        <button key={m.key} role="tab" aria-selected={mode === m.key} className={`mode-opt ${mode === m.key ? 'on' : ''}`} onClick={() => onChange(m.key)} title={m.hint}>
           {m.label}
         </button>
       ))}
@@ -2033,9 +2033,13 @@ function Agents() {
   const [running, setRunning] = useState(false)
   const [history, setHistory] = useState<RunSummary[]>([])
   const [skills, setSkills] = useState<Skill[]>([])
+  const [migrationPreview, setMigrationPreview] = useState<AgentMigrationPreview | null>(null)
+  const [migrationChoice, setMigrationChoice] = useState<Record<string, string>>({})
+  const [migrationBusy, setMigrationBusy] = useState('')
+  const [migrationError, setMigrationError] = useState('')
   const feedRef = useRef<HTMLDivElement>(null)
 
-  const refresh = () => { api.agents().then(setAgents); api.runs().then(setHistory) }
+  const refresh = () => { api.agents().then(setAgents); api.runs().then(setHistory); api.agentMigrationPreview().then(setMigrationPreview).catch(() => {}) }
   useEffect(() => { refresh(); api.models().then(setModels).catch(() => {}); api.skills().then(setSkills).catch(() => {}) }, [])
   useEffect(() => { feedRef.current?.scrollTo(0, 1e9) }, [events])
 
@@ -2052,11 +2056,39 @@ function Agents() {
     subscribeRun(id, ev => setEvents(prev => [...prev, ev]), () => {})
   }
 
+  const migrateAgent = async (agent: Agent) => {
+    const proposal = migrationPreview?.proposals.find(item => item.legacyAgentId === agent.id)
+    if (!proposal) return
+    const primitiveId = proposal.primitiveId || migrationChoice[agent.id]
+    if (!primitiveId) { setMigrationError('Choose the intended primitive before migrating this ambiguous legacy role.'); return }
+    if (!confirm(`Create a versioned ${primitiveId} Role Card and Agent Instance for ${agent.name}?\n\nThe legacy agent remains unchanged and rollback stays available.`)) return
+    setMigrationBusy(agent.id); setMigrationError('')
+    try {
+      await api.migrateAgent(agent.id, { ...(proposal.primitiveId ? {} : { primitiveId }), expectedLegacyHash: proposal.legacySnapshotHash, expectedRevision: migrationPreview!.architectureRevision, commandId: crypto.randomUUID() })
+      refresh()
+    } catch (error) { setMigrationError(String(error)); refresh() }
+    finally { setMigrationBusy('') }
+  }
+
+  const rollbackAgent = async (agent: Agent) => {
+    const proposal = migrationPreview?.proposals.find(item => item.legacyAgentId === agent.id)
+    if (!proposal || !confirm(`Return ${agent.name} to legacy fallback?\n\nArchitecture records and receipts remain preserved for audit and exact re-migration.`)) return
+    setMigrationBusy(agent.id); setMigrationError('')
+    try {
+      await api.rollbackAgentMigration(agent.id, { expectedLegacyHash: proposal.legacySnapshotHash, expectedRevision: migrationPreview!.architectureRevision, commandId: crypto.randomUUID() })
+      refresh()
+    } catch (error) { setMigrationError(String(error)); refresh() }
+    finally { setMigrationBusy('') }
+  }
+
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
         <button className="btn primary" onClick={() => setEditing({ avatar: '🤖', permissions: 'standard', department: 'General Operations', model: models.find(m => m.state === 'loaded') ? 'lmstudio/' + models.find(m => m.state === 'loaded')!.id : '' })}>+ New Agent</button>
       </div>
+
+      {migrationPreview && <div className="plain-callout" data-testid="agent-migration-summary" style={{ marginBottom: 14 }}><b>Agent Architecture migration</b><p>{migrationPreview.summary.ready} ready · {migrationPreview.summary.reviewRequired} need an explicit role decision · architecture revision {migrationPreview.architectureRevision}</p><small>Preview and migration are nondestructive. Legacy IDs, prompts, models, folders, permissions, skills, and configuration remain intact.</small></div>}
+      {migrationError && <div className="perm-line warn" role="alert" style={{ marginBottom: 12 }}>{migrationError}</div>}
 
       <div className="grid cols-2">
         {agents.map(a => (
@@ -2074,6 +2106,21 @@ function Agents() {
             </div>
             <div className="agent-prompt">{a.prompt}</div>
             <div className="meta" style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>📁 {a.folder}</div>
+            {a.architecture ? (
+              <details data-testid={`agent-architecture-${a.id}`} style={{ marginTop: 12 }}>
+                <summary><b>{a.architecture.primitiveId}</b> primitive · Role Card v{a.architecture.roleCardVersion}</summary>
+                <div className="meta" style={{ marginTop: 8 }}>Role Card: {a.architecture.roleCardId}<br />Agent Instance: {a.architecture.agentInstanceId}<br />Class: {a.architecture.organizationalClass}<br />Status: {a.architecture.status}</div>
+                <button className="btn" style={{ marginTop: 8 }} disabled={migrationBusy === a.id} onClick={() => rollbackAgent(a)}>Use legacy fallback</button>
+              </details>
+            ) : (() => {
+              const proposal = migrationPreview?.proposals.find(item => item.legacyAgentId === a.id)
+              if (!proposal) return null
+              return <div data-testid={`agent-migration-${a.id}`} style={{ marginTop: 12 }}>
+                <div className="meta"><b>{proposal.status === 'READY' ? `Ready to become ${proposal.primitiveId}` : 'Role decision required'}</b>{proposal.ambiguityReasons.map(reason => <small key={reason} style={{ display: 'block' }}>{reason}</small>)}</div>
+                {proposal.status === 'REVIEW_REQUIRED' && <select aria-label={`Primitive for ${a.name}`} value={migrationChoice[a.id] || ''} onChange={event => setMigrationChoice(current => ({ ...current, [a.id]: event.target.value }))}><option value="">Choose primitive…</option>{proposal.primitiveCandidates.map(id => <option key={id} value={id}>{id}</option>)}</select>}
+                <button className="btn" style={{ marginTop: 8 }} disabled={migrationBusy === a.id || (!proposal.primitiveId && !migrationChoice[a.id])} onClick={() => migrateAgent(a)}>{migrationBusy === a.id ? 'Migrating…' : 'Create versioned architecture'}</button>
+              </div>
+            })()}
           </div>
         ))}
       </div>

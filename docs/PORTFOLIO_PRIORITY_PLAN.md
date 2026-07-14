@@ -156,7 +156,7 @@ Deferred does not mean forgotten. Each item retains its rationale and unlock con
 |---|---|---:|---|
 | A | Permission/filesystem/request/redaction/lifecycle foundation | COMPLETE | Committed and verified |
 | B | Per-node recovery, effects, approval/pause, hermetic journey | COMPLETE | Core local-first journey is trustworthy across crash and ambiguity |
-| C | Governance/custom/evaluation/Studio/agents/Operations Map closure | COMPLETE FOR CURRENT SCOPE | Current product scope is feature-complete and truthful; agent-primitives amendment remains separate |
+| C | Governance/custom/evaluation/Studio/agents/Operations Map closure | COMPLETE FOR CURRENT SCOPE | Current product scope and the additive Agent Primitive migration amendment are implemented and release-gated |
 | D | Packaging, backup/restore, soak, security/accessibility/performance RC | ENGINEERING COMPLETE | Reproducible hardened source/package candidate; open-source designation awaits license |
 | E | Controlled evolution and measured AI-factory upgrades | 2–4 weeks, post-RC and incremental | The factory improves from evidence without self-modifying authority |
 
