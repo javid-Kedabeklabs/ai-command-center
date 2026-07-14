@@ -20,7 +20,7 @@ const tempRepository = () => {
 }
 
 const packet = (taskId = 'claude-state-pilot', overrides = {}) => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   taskId,
   title: 'Persist collaboration task',
   status: 'QUEUED',
@@ -45,10 +45,18 @@ const packet = (taskId = 'claude-state-pilot', overrides = {}) => ({
   allowNetwork: false,
   requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
+  contractPack: { reviewedBaseSha: 'a'.repeat(40), acceptanceTestCommitSha: 'a'.repeat(40), contractFiles: [{ path: 'docs/MASTER_PLAN.md', sha256: 'b'.repeat(64) }], scenarioIds: ['STATE-01'], maxChangedFiles: 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
   ...overrides,
 })
 
 console.log('== collaboration task persistence ==')
+
+await test('rejects newly queued legacy packets while preserving schema validation compatibility', async () => {
+  const root = tempRepository(), store = createCollaborationTaskStore({ repositoryRoot: root })
+  const { contractPack, ...legacy } = packet('legacy-new-packet', { schemaVersion: 1 })
+  await assert.rejects(() => store.createTask(legacy), error => error.code === 'COLLABORATION_PACKET_UPGRADE_REQUIRED')
+  fs.rmSync(root, { recursive: true, force: true })
+})
 
 await test('constrains the state root to the configured repository', async () => {
   const root = tempRepository()

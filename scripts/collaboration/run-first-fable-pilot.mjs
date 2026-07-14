@@ -3,14 +3,18 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import { createClaudeRunner } from '../../server/collaboration/claude-runner.js'
 import { createCollaborationProcessManager } from '../../server/collaboration/process-manager.js'
 import { createWorktreeManager } from '../../server/collaboration/worktree-manager.js'
 
 const root = fs.realpathSync(path.resolve(new URL('../..', import.meta.url).pathname))
 const claude = fs.realpathSync(execFileSync('/bin/zsh', ['-lc', 'command -v claude'], { encoding: 'utf8' }).trim())
+const baseSha = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+const contractPath = 'web/src/workflowGroupHelpers.ts'
+const contractHash = crypto.createHash('sha256').update(execFileSync('git', ['-C', root, 'show', `${baseSha}:${contractPath}`])).digest('hex')
 const task = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   taskId: 'fable-group-tests-pilot-001',
   title: 'Harden workflow group helper tests',
   status: 'QUEUED',
@@ -40,6 +44,7 @@ const task = {
   allowNetwork: false,
   requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
+  contractPack: { reviewedBaseSha: baseSha, acceptanceTestCommitSha: baseSha, contractFiles: [{ path: contractPath, sha256: contractHash }], scenarioIds: ['GROUP-HELPERS-01', 'GROUP-HELPERS-02', 'GROUP-HELPERS-03'], maxChangedFiles: 1, estimatedCodexSeconds: 10800, stopConditions: ['Stop if any file outside the exact lease is required.', 'Stop if the frozen helper contract differs from the reviewed base.', 'Stop rather than weakening, skipping, or retrying acceptance tests.'] },
 }
 const profile = {
   version: '2.1.207',
@@ -47,7 +52,6 @@ const profile = {
 }
 
 const manager = createWorktreeManager({ repositoryRoot: root })
-const baseSha = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
 const worktree = manager.create({ taskId: task.taskId, baseSha, branchName: `claude/${task.taskId}`, refuseDirtyPrimary: false, requireHeadBase: true })
 const processes = createCollaborationProcessManager({ repositoryRoot: root, allowedExecutables: [claude] })
 const runner = createClaudeRunner({

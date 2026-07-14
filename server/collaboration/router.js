@@ -1,5 +1,6 @@
 import express from 'express'
 import { requireMutationIntent } from '../security/local-request-guard.js'
+import { COLLABORATION_TASK_SCHEMA_VERSION } from './task-schema.js'
 
 const publicError = error => ({ error: String(error?.message || error).replace(/\s+/g, ' ').trim().slice(0, 500), code: error?.code || 'COLLABORATION_ERROR' })
 const publicLease = lease => ({
@@ -16,6 +17,8 @@ export function createCollaborationRouter({ taskStore, worktreeManager, metricsS
     try {
       await taskStore.initialize()
       const tasks = await taskStore.listTasks()
+      const packets = await Promise.all(tasks.map(item => taskStore.getTask(item.taskId)))
+      const packetCounts = { contractComplete: packets.filter(item => item?.task?.schemaVersion === COLLABORATION_TASK_SCHEMA_VERSION).length, upgradeRequired: packets.filter(item => item?.task?.schemaVersion !== COLLABORATION_TASK_SCHEMA_VERSION).length }
       const counts = Object.fromEntries(['QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'BLOCKED', 'FAILED', 'CANCELLED'].map(status => [status, tasks.filter(item => item.status === status).length]))
       const leases = worktreeManager.list().map(publicLease)
       res.set('Cache-Control', 'no-store').json({
@@ -25,6 +28,7 @@ export function createCollaborationRouter({ taskStore, worktreeManager, metricsS
         dispatchEnabled: liveDispatch.enabled === true,
         dispatchUnavailableReason: liveDispatch.enabled ? null : liveDispatch.reason,
         dispatchContract: { schemaVersion: 1, verified: true, prerequisites: ['explicit-owner-command', 'reviewed-clean-base', 'available-fable-capacity', 'verified-worktree-lease', 'owned-process-receipt', 'codex-integration-review'] },
+        taskPacketContract: { currentSchemaVersion: COLLABORATION_TASK_SCHEMA_VERSION, legacyReadOnlyCompatibility: true, newLegacyPacketsAccepted: false, ...packetCounts },
         metrics: metricsStore ? await metricsStore.summary() : { schemaVersion: 1, mode: 'UNAVAILABLE', observations: 0, defects: 0, byTaskClass: [], qwen: { observations: 0, acceptedFindingRate: null, falseBlockingFindings: 0, medianReviewSeconds: null, recommendation: 'INSUFFICIENT_OR_NONQUALIFYING_EVIDENCE', automaticAuthority: false } },
         policy: { centralRuntimeWriter: 'codex', modifyingWorker: 'claude-fable', reviewer: 'qwen-read-only', automaticIntegration: false },
         counts, activeLeases: leases.filter(item => item.state === 'ACTIVE').length,

@@ -155,6 +155,13 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
 
   const recovery = reconcile()
 
+  function assertPrimaryClean({ allowDirtyPrimaryPatterns = [] } = {}) {
+    const dirty = dirtyPrimaryFiles(repository)
+    const unexpected = dirty.filter(file => !allowDirtyPrimaryPatterns.some(pattern => patternsOverlap(file, pattern)))
+    if (unexpected.length) throw Object.assign(new Error('primary checkout has source changes outside the approved runtime-data boundary'), { code: 'COLLABORATION_DIRTY_PRIMARY', files: unexpected })
+    return { clean: true, allowedDirtyFiles: dirty }
+  }
+
   function create({ taskId, baseSha, branchName, refuseDirtyPrimary = true, requireHeadBase = true, allowDirtyPrimaryPatterns = [], excludeSensitivePaths = true }) {
     const id = safeTaskId(taskId), branch = safeBranch(branchName || `claude/${id}`)
     if (records.has(id)) throw Object.assign(new Error('task already has a registered worktree'), { code: 'COLLABORATION_WORKTREE_EXISTS' })
@@ -163,9 +170,7 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
     const resolvedBase = git(repository, ['rev-parse', '--verify', `${baseSha}^{commit}`])
     const primaryHead = git(repository, ['rev-parse', 'HEAD'])
     if (requireHeadBase && resolvedBase !== primaryHead) throw Object.assign(new Error('explicit base SHA does not represent current primary HEAD'), { code: 'COLLABORATION_UNEXPECTED_BASE' })
-    const dirty = dirtyPrimaryFiles(repository)
-    const unexpectedDirty = dirty.filter(file => !allowDirtyPrimaryPatterns.some(pattern => patternsOverlap(file, pattern)))
-    if (refuseDirtyPrimary && unexpectedDirty.length) throw Object.assign(new Error('primary checkout has source changes outside the approved runtime-data boundary'), { code: 'COLLABORATION_DIRTY_PRIMARY', files: unexpectedDirty })
+    if (refuseDirtyPrimary) assertPrimaryClean({ allowDirtyPrimaryPatterns })
     git(repository, ['worktree', 'add', '-b', branch, destination, resolvedBase])
     if (excludeSensitivePaths) git(destination, ['sparse-checkout', 'set', '--no-cone', '/*', '!/data/', '!/logs/', '!/state/'])
     const timestamp = now()
@@ -228,7 +233,7 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
     return { taskId: id, removed: true, branchPreserved: !deleteBranch, disposition: integrated ? 'INTEGRATED' : rejected ? 'REJECTED' : 'EMPTY' }
   }
 
-  return { create, get, list, inspect, markInactive, cleanup, recovery, repositoryRoot: repository, worktreeRoot: canonicalWorktrees, leaseFile: leasesPath }
+  return { create, get, list, inspect, markInactive, cleanup, assertPrimaryClean, recovery, repositoryRoot: repository, worktreeRoot: canonicalWorktrees, leaseFile: leasesPath }
 }
 
 export { git as runGit }

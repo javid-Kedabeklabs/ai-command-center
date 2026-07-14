@@ -9,6 +9,8 @@ Completion checkpoint (2026-07-14): phases 0–10 and 14 plus the additive Agent
 
 Dependency-aware delivery order, parallel preparation, deferred enhancements, estimates, and independent-review prompt are maintained in `docs/PORTFOLIO_PRIORITY_PLAN.md`.
 
+Material self-challenge questions and their evidence-backed resolution state are maintained in `docs/OPEN_QUESTIONS.md`. The ledger is durable project state: open questions are reviewed during relevant slices and are never considered closed merely because a conversation ended.
+
 ## 1. Executive assessment
 
 AI Command Center is now a hardened local-first v1 candidate with optional permission-controlled online connectivity. The paragraph and weighted table below preserve the audited beginning-of-contract assessment for traceability; they are not current status. Current code has additive canonical schemas, per-node recovery, effect receipts, durable controls, exact governance/evaluation evidence, reviewed package lifecycle, trigger recovery, complete current-scope Studio UX, truthful Company World, and deterministic packaging/hardening gates.

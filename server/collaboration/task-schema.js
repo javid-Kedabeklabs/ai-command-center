@@ -1,4 +1,7 @@
-export const COLLABORATION_TASK_SCHEMA_VERSION = 1
+import { patternsOverlap } from './conflict-detector.js'
+
+export const COLLABORATION_TASK_SCHEMA_VERSION = 2
+export const SUPPORTED_COLLABORATION_TASK_SCHEMA_VERSIONS = Object.freeze([1, 2])
 
 export const TASK_STATUSES = Object.freeze([
   'QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'BLOCKED', 'FAILED', 'CANCELLED',
@@ -21,10 +24,12 @@ const ROOT_KEYS = new Set([
   'assignedWorker', 'taskType', 'objective', 'background', 'acceptanceCriteria',
   'filesAllowed', 'filesForbidden', 'readOnlyContextFiles', 'dependencies',
   'requiredTests', 'permissionProfile', 'modelPolicy', 'maxTurns', 'timeoutSeconds',
-  'allowSubagents', 'allowNetwork', 'requiresCommit', 'expectedOutput',
+  'allowSubagents', 'allowNetwork', 'requiresCommit', 'expectedOutput', 'contractPack',
 ])
 const MODEL_KEYS = new Set(['primary', 'fallback', 'effort'])
 const OUTPUT_KEYS = new Set(['summary', 'filesChanged', 'tests', 'commitSha', 'risks'])
+const CONTRACT_KEYS = new Set(['reviewedBaseSha', 'contractFiles', 'acceptanceTestCommitSha', 'scenarioIds', 'maxChangedFiles', 'estimatedCodexSeconds', 'stopConditions'])
+const CONTRACT_FILE_KEYS = new Set(['path', 'sha256'])
 const FORBIDDEN_PATH_SEGMENTS = new Set(['.git', '.env', '.ssh', '.gnupg', 'node_modules'])
 const SECRET_PATH = /(^|\/)(?:secrets?|credentials?|tokens?)(?:\/|$)|(?:^|\/)(?:\.env)(?:\.|$)/i
 const GLOB_META = /[*?\[\]{}]/
@@ -89,7 +94,7 @@ function scopeContradiction(allowed, forbidden) {
 export function validateTaskPacket(input) {
   if (!plainObject(input)) throw new Error('collaboration task must be an object')
   rejectUnknownKeys(input, ROOT_KEYS, 'collaboration task')
-  if (input.schemaVersion !== COLLABORATION_TASK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${COLLABORATION_TASK_SCHEMA_VERSION}`)
+  if (!SUPPORTED_COLLABORATION_TASK_SCHEMA_VERSIONS.includes(input.schemaVersion)) throw new Error(`schemaVersion must be one of ${SUPPORTED_COLLABORATION_TASK_SCHEMA_VERSIONS.join(', ')}`)
 
   const taskId = requireText(input.taskId, 'taskId', { max: 100, pattern: /^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$/ })
   const title = requireText(input.title, 'title', { max: 120 })
@@ -141,15 +146,44 @@ export function validateTaskPacket(input) {
   const contradiction = scopeContradiction(filesAllowed, filesForbidden)
   if (contradiction) throw new Error(`allowed and forbidden file scopes conflict: ${contradiction.join(' <> ')}`)
 
+  let contractPack = null
+  if (input.schemaVersion === 2) {
+    if (!plainObject(input.contractPack)) throw new Error('schemaVersion 2 requires contractPack')
+    rejectUnknownKeys(input.contractPack, CONTRACT_KEYS, 'contractPack')
+    const sha = (value, label, length = 40) => requireText(value, label, { min: length, max: 64, pattern: /^[a-f0-9]{40,64}$/ })
+    const reviewedBaseSha = sha(input.contractPack.reviewedBaseSha, 'contractPack.reviewedBaseSha')
+    const acceptanceTestCommitSha = sha(input.contractPack.acceptanceTestCommitSha, 'contractPack.acceptanceTestCommitSha')
+    if (!Array.isArray(input.contractPack.contractFiles) || input.contractPack.contractFiles.length < 1 || input.contractPack.contractFiles.length > 30) throw new Error('contractPack.contractFiles must contain between 1 and 30 files')
+    const seenContractFiles = new Set()
+    const contractFiles = input.contractPack.contractFiles.map((item, index) => {
+      if (!plainObject(item)) throw new Error(`contractPack.contractFiles[${index}] must be an object`)
+      rejectUnknownKeys(item, CONTRACT_FILE_KEYS, `contractPack.contractFiles[${index}]`)
+      const contractPath = validateRepositoryPattern(item.path, `contractPack.contractFiles[${index}].path`)
+      if (GLOB_META.test(contractPath) || contractPath.includes(':')) throw new Error('contractPack contract file paths must be exact safe Git paths')
+      if (seenContractFiles.has(contractPath)) throw new Error('contractPack contract file paths must be unique')
+      seenContractFiles.add(contractPath)
+      if (!readOnlyContextFiles.includes(contractPath)) throw new Error('every contractPack contract file must be listed in readOnlyContextFiles')
+      if (filesAllowed.some(pattern => patternsOverlap(pattern, contractPath))) throw new Error('contractPack contract files cannot overlap writable filesAllowed')
+      return Object.freeze({ path: contractPath, sha256: requireText(item.sha256, `contractPack.contractFiles[${index}].sha256`, { min: 64, max: 64, pattern: /^[a-f0-9]{64}$/ }) })
+    })
+    const scenarioIds = uniqueTextArray(input.contractPack.scenarioIds, 'contractPack.scenarioIds', { min: 1, max: 50, itemMax: 100 })
+    for (const scenarioId of scenarioIds) if (!/^[A-Z0-9][A-Z0-9._-]{1,99}$/.test(scenarioId)) throw new Error('contractPack.scenarioIds contains an invalid stable scenario id')
+    const maxChangedFiles = input.contractPack.maxChangedFiles
+    if (!Number.isInteger(maxChangedFiles) || maxChangedFiles < (readOnly ? 0 : 1) || maxChangedFiles > 25 || readOnly && maxChangedFiles !== 0) throw new Error('contractPack.maxChangedFiles is invalid for the task authority')
+    if (!Number.isInteger(input.contractPack.estimatedCodexSeconds) || input.contractPack.estimatedCodexSeconds < 60 || input.contractPack.estimatedCodexSeconds > 604_800) throw new Error('contractPack.estimatedCodexSeconds must be between 60 and 604800')
+    const stopConditions = uniqueTextArray(input.contractPack.stopConditions, 'contractPack.stopConditions', { min: 3, max: 30, itemMax: 500 })
+    contractPack = Object.freeze({ reviewedBaseSha, acceptanceTestCommitSha, contractFiles: Object.freeze(contractFiles), scenarioIds: Object.freeze(scenarioIds), maxChangedFiles, estimatedCodexSeconds: input.contractPack.estimatedCodexSeconds, stopConditions: Object.freeze(stopConditions) })
+  } else if (input.contractPack != null) throw new Error('legacy schemaVersion 1 cannot contain contractPack')
+
   return Object.freeze({
-    schemaVersion: 1, taskId, title, status: input.status, phase, priority: input.priority,
+    schemaVersion: input.schemaVersion, taskId, title, status: input.status, phase, priority: input.priority,
     createdBy: input.createdBy, assignedWorker: input.assignedWorker, taskType: input.taskType,
     objective, background, acceptanceCriteria, filesAllowed, filesForbidden, readOnlyContextFiles,
     dependencies, requiredTests, permissionProfile: input.permissionProfile,
     modelPolicy: Object.freeze({ ...input.modelPolicy }), maxTurns: input.maxTurns,
     timeoutSeconds: input.timeoutSeconds, allowSubagents: input.allowSubagents,
     allowNetwork: false, requiresCommit: input.requiresCommit,
-    expectedOutput: Object.freeze({ ...input.expectedOutput }),
+    expectedOutput: Object.freeze({ ...input.expectedOutput }), ...(contractPack ? { contractPack } : {}),
   })
 }
 

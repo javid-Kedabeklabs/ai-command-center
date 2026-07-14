@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { isReadOnlyTaskType } from './task-schema.js'
+import { verifyTaskContract } from './contract-verifier.js'
 
 const BLOCKING_FAILURES = new Set(['AUTH_REQUIRED', 'RATE_LIMITED', 'USAGE_LIMIT_REACHED', 'MODEL_UNAVAILABLE', 'SERVICE_UNAVAILABLE', 'PERMISSION_ERROR', 'COLLABORATION_START_RECEIPT_FAILED'])
 const resultStatus = status => ({ COMPLETED: 'COMPLETED', PARTIAL: 'PARTIAL', BLOCKED: 'BLOCKED', FAILED_SAFELY: 'FAILED' })[status] || 'FAILED'
@@ -16,7 +17,9 @@ export function createCollaborationDispatcher({ taskStore, worktreeManager, runn
     if (record.status !== 'QUEUED') throw Object.assign(new Error(`task cannot dispatch from ${record.status}`), { code: 'COLLABORATION_DUPLICATE_DISPATCH' })
     const task = record.task, readOnly = isReadOnlyTaskType(task.taskType)
     if (!readOnly && worktreeManager.available === false) throw Object.assign(new Error('a source Git checkout is required for modifying collaboration tasks'), { code: 'COLLABORATION_WORKTREE_UNAVAILABLE' })
-    if (!readOnly && !baseSha) throw Object.assign(new Error('a reviewed base SHA is required'), { code: 'COLLABORATION_BASE_REQUIRED' })
+    if (!baseSha) throw Object.assign(new Error('a reviewed base SHA is required'), { code: 'COLLABORATION_BASE_REQUIRED' })
+    worktreeManager.assertPrimaryClean?.({ allowDirtyPrimaryPatterns })
+    const contractVerification = verifyTaskContract({ repositoryRoot: worktreeManager.repositoryRoot, taskPacket: task, requestedBaseSha: baseSha })
     const dispatchId = `dispatch-${randomId()}`
     let lease = null, claimed = false, inspection = null
     try {
@@ -31,13 +34,14 @@ export function createCollaborationDispatcher({ taskStore, worktreeManager, runn
         inspection = worktreeManager.inspect(task.taskId, { taskPacket: task, requireCommit: task.requiresCommit })
         const reported = worker.result.commitSha
         if (!reported || (reported !== inspection.headSha && !inspection.headSha.startsWith(reported))) throw Object.assign(new Error('worker-reported commit does not match the inspected worktree'), { code: 'COLLABORATION_COMMIT_MISMATCH' })
+        if (inspection.filesChanged.length > contractVerification.maxChangedFiles) throw Object.assign(new Error('worker commit exceeds the frozen changed-file budget'), { code: 'COLLABORATION_TASK_SIZE_EXCEEDED' })
         worktreeManager.markInactive(task.taskId)
       }
       const completedAt = now()
       const receipt = {
         schemaVersion: 1, dispatchId, taskId: task.taskId, status: resultStatus(worker.result.status),
         requestedModel: worker.requestedModel, actualModel: worker.actualModel, fallbackUsed: worker.fallbackUsed,
-        process: worker.process, lease: publicLease(lease), inspection: publicInspection(inspection),
+        process: worker.process, lease: publicLease(lease), inspection: publicInspection(inspection), contractVerification,
         result: worker.result, completedAt,
       }
       receipt.receiptSha256 = receiptHash(receipt)

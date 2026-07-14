@@ -25,14 +25,15 @@ function repository() {
 }
 
 const packet = (taskId, overrides = {}) => ({
-  schemaVersion: 1, taskId, title: 'Fixture worktree task', status: 'QUEUED', phase: 'PHASE D', priority: 50,
+  schemaVersion: 2, taskId, title: 'Fixture worktree task', status: 'QUEUED', phase: 'PHASE D', priority: 50,
   createdBy: 'codex', assignedWorker: 'claude-fable', taskType: 'IMPLEMENTATION',
   objective: 'Modify one allowed fixture file in an isolated worktree.', background: 'This is a deterministic fixture with no vendor calls.',
   acceptanceCriteria: ['One isolated commit changes only allowed files.'], filesAllowed: ['src/allowed.txt'], filesForbidden: ['data/**'],
-  readOnlyContextFiles: [], dependencies: [], requiredTests: ['fixture'], permissionProfile: 'WORKTREE_IMPLEMENTATION',
+  readOnlyContextFiles: ['.gitignore'], dependencies: [], requiredTests: ['fixture'], permissionProfile: 'WORKTREE_IMPLEMENTATION',
   modelPolicy: { primary: 'fable', fallback: 'sonnet', effort: 'max' }, maxTurns: 10, timeoutSeconds: 300,
   allowSubagents: false, allowNetwork: false, requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true }, ...overrides,
+  contractPack: { reviewedBaseSha: 'a'.repeat(40), acceptanceTestCommitSha: 'a'.repeat(40), contractFiles: [{ path: '.gitignore', sha256: 'b'.repeat(64) }], scenarioIds: ['WORKTREE-01'], maxChangedFiles: 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
 })
 
 const commit = (worktree, file, content, message = 'worker change') => {

@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import express from 'express'
 import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import { createCollaborationRouter } from '../server/collaboration/router.js'
 import { createCollaborationTaskStore } from '../server/collaboration/task-store.js'
 import { createWorktreeManager } from '../server/collaboration/worktree-manager.js'
@@ -24,14 +25,17 @@ const app = express(); app.use(express.json()); app.use('/api/collaboration', cr
 const server = http.createServer(app)
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api/collaboration`
+const baseSha = git(root, ['rev-parse', 'HEAD'])
+const contractHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'src', 'fixture.txt'))).digest('hex')
 const packet = {
-  schemaVersion: 1, taskId: 'api-fable-task', title: 'Bounded UI implementation', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
+  schemaVersion: 2, taskId: 'api-fable-task', title: 'Bounded UI implementation', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
   createdBy: 'codex', assignedWorker: 'claude-fable', taskType: 'UX_IMPLEMENTATION', objective: 'Implement one bounded UI slice.',
   background: 'The API stores a task packet but never dispatches it automatically.', acceptanceCriteria: ['Packet is validated and durable.'],
-  filesAllowed: ['web/src/components/**'], filesForbidden: ['server/**', 'data/**'], readOnlyContextFiles: ['web/src/api.ts'], dependencies: [],
+  filesAllowed: ['web/src/components/**'], filesForbidden: ['server/**', 'data/**'], readOnlyContextFiles: ['src/fixture.txt'], dependencies: [],
   requiredTests: ['npm run build'], permissionProfile: 'WORKTREE_IMPLEMENTATION', modelPolicy: { primary: 'fable', fallback: 'sonnet', effort: 'max' },
   maxTurns: 20, timeoutSeconds: 600, allowSubagents: false, allowNetwork: false, requiresCommit: true,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: true, risks: true },
+  contractPack: { reviewedBaseSha: baseSha, acceptanceTestCommitSha: baseSha, contractFiles: [{ path: 'src/fixture.txt', sha256: contractHash }], scenarioIds: ['API-01'], maxChangedFiles: 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
 }
 const request = async (route, options) => { const response = await fetch(base + route, options); return { response, body: await response.json() } }
 let passed = 0
@@ -41,7 +45,7 @@ console.log('== collaboration control-plane API ==')
 try {
   await test('reports a sanitized non-dispatching control plane', async () => {
     const { response, body } = await request('/status')
-    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
+    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.taskPacketContract.currentSchemaVersion, 2); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
     assert.equal(JSON.stringify(body).includes(root), false)
   })
   await test('requires explicit mutation intent and validates task packets', async () => {

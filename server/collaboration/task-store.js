@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { redactSensitive } from './result-parser.js'
-import { TASK_STATUSES, validateTaskPacket } from './task-schema.js'
+import { COLLABORATION_TASK_SCHEMA_VERSION, TASK_STATUSES, validateTaskPacket } from './task-schema.js'
 import { assertOwnershipAvailable } from './conflict-detector.js'
 
 export const COLLABORATION_TASK_STORE_VERSION = 1
@@ -197,6 +197,7 @@ export function createCollaborationTaskStore({ repositoryRoot, storeRoot = path.
   async function createTask(packet, evidence = null) {
     return mutate(() => {
       const task = validateTaskPacket(redactSensitive(packet))
+      if (task.schemaVersion !== COLLABORATION_TASK_SCHEMA_VERSION) throw Object.assign(new Error(`new collaboration tasks require schemaVersion ${COLLABORATION_TASK_SCHEMA_VERSION}`), { code: 'COLLABORATION_PACKET_UPGRADE_REQUIRED' })
       if (task.status !== 'QUEUED') throw new Error('new collaboration task must be QUEUED')
       if (index.tasks[task.taskId]) return { task: readTaskRecord(task.taskId), duplicate: true }
       const timestamp = now()

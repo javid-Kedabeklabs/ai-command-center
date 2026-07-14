@@ -9,6 +9,7 @@ const REQUIRED_HELP = ['--print', '--model', '--effort', '--permission-mode', '-
 
 export function createLiveCollaborationDispatch({ repositoryRoot, taskStore, worktreeManager, enabled = false, environment = process.env, workerContract = null } = {}) {
   if (!enabled) return { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }
+  if (worktreeManager?.available === false || !worktreeManager?.repositoryRoot) return { enabled: false, reason: 'COLLABORATION_WORKTREE_UNAVAILABLE', dispatcher: null }
   try {
     const configured = String(environment.ACC_CLAUDE_PATH || '').trim()
     const discovered = configured || execFileSync('/usr/bin/which', ['claude'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()

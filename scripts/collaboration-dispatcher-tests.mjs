@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import { createClaudeRunner } from '../server/collaboration/claude-runner.js'
 import { createCollaborationDispatcher } from '../server/collaboration/dispatcher.js'
 import { createLiveCollaborationDispatch } from '../server/collaboration/live-dispatch.js'
@@ -23,16 +24,21 @@ const repository = () => {
   git(root, ['init', '-q']); git(root, ['config', 'user.email', 'fixture@example.invalid']); git(root, ['config', 'user.name', 'Fixture']); git(root, ['add', '.']); git(root, ['commit', '-qm', 'base'])
   return root
 }
-const task = (taskId, readOnly = false) => ({
-  schemaVersion: 1, taskId, title: 'Dispatcher fixture', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
+const task = (root, taskId, readOnly = false, overrides = {}) => {
+  const baseSha = git(root, ['rev-parse', 'HEAD']), contractPath = '.gitignore'
+  const contractHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, contractPath))).digest('hex')
+  return ({
+  schemaVersion: 2, taskId, title: 'Dispatcher fixture', status: 'QUEUED', phase: 'COLLABORATION', priority: 50,
   createdBy: 'codex', assignedWorker: 'claude-fable', taskType: readOnly ? 'READ_ONLY_AUDIT' : 'IMPLEMENTATION',
   objective: readOnly ? 'Inspect the bounded fixture without changing files.' : 'Create one bounded fixture file and commit it.',
   background: 'The deterministic fixture proves dispatch receipts without consuming model capacity.', acceptanceCriteria: ['Return one provenance-bound result.'],
-  filesAllowed: readOnly ? [] : ['web/src/components/Pilot/**'], filesForbidden: ['data/**'], readOnlyContextFiles: [], dependencies: [], requiredTests: ['fixture'],
+  filesAllowed: readOnly ? [] : ['web/src/components/Pilot/**'], filesForbidden: ['data/**'], readOnlyContextFiles: [contractPath], dependencies: [], requiredTests: ['fixture'],
   permissionProfile: readOnly ? 'READ_ONLY_ADVISOR' : 'WORKTREE_IMPLEMENTATION', modelPolicy: { primary: 'fable', fallback: 'sonnet', effort: 'max' },
   maxTurns: 12, timeoutSeconds: 30, allowSubagents: false, allowNetwork: false, requiresCommit: !readOnly,
   expectedOutput: { summary: true, filesChanged: true, tests: true, commitSha: !readOnly, risks: true },
-})
+  contractPack: { reviewedBaseSha: baseSha, acceptanceTestCommitSha: baseSha, contractFiles: [{ path: contractPath, sha256: contractHash }], scenarioIds: ['DISPATCH-01'], maxChangedFiles: readOnly ? 0 : 25, estimatedCodexSeconds: 3600, stopConditions: ['Stop outside the leased paths.', 'Stop when a frozen contract changes.', 'Stop rather than weaken acceptance tests.'] },
+  ...overrides,
+}) }
 const harness = root => {
   const taskStore = createCollaborationTaskStore({ repositoryRoot: root })
   const worktreeManager = createWorktreeManager({ repositoryRoot: root })
@@ -54,7 +60,7 @@ await test('requires explicit host opt-in and an exact reviewed Claude capabilit
   fs.rmSync(root, { recursive: true, force: true })
 })
 await test('binds a modifying task, lease, owned process, model, commit inspection, and terminal receipt', async () => {
-  const root = repository(), h = harness(root), packet = task('dispatcher-implementation')
+  const root = repository(), h = harness(root), packet = task(root, 'dispatcher-implementation')
   await h.taskStore.createTask(packet)
   const receipt = await h.dispatcher.dispatch(packet.taskId, { baseSha: git(root, ['rev-parse', 'HEAD']) })
   assert.equal(receipt.status, 'COMPLETED'); assert.equal(receipt.actualModel, 'claude-fable-5'); assert.equal(receipt.fallbackUsed, false)
@@ -70,20 +76,29 @@ await test('binds a modifying task, lease, owned process, model, commit inspecti
 })
 
 await test('records model capacity failure as blocked and never leaves a running task', async () => {
-  const root = repository(), h = harness(root), packet = task('runner-auth', true)
+  const root = repository(), h = harness(root), packet = task(root, 'runner-auth', true)
   await h.taskStore.createTask(packet)
-  await assert.rejects(() => h.dispatcher.dispatch(packet.taskId), error => error.code === 'AUTH_REQUIRED' && error.dispatchReceipt.status === 'BLOCKED')
+  await assert.rejects(() => h.dispatcher.dispatch(packet.taskId, { baseSha: packet.contractPack.reviewedBaseSha }), error => error.code === 'AUTH_REQUIRED' && error.dispatchReceipt.status === 'BLOCKED')
   const stored = await h.taskStore.getTask(packet.taskId)
   assert.equal(stored.status, 'BLOCKED'); assert.equal(stored.evidence.dispatchReceipt.code, 'AUTH_REQUIRED'); assert(stored.dispatch.pid > 0)
   fs.rmSync(root, { recursive: true, force: true })
 })
 
 await test('fails before reservation when a modifying dispatch lacks a reviewed base', async () => {
-  const root = repository(), h = harness(root), packet = task('missing-reviewed-base')
+  const root = repository(), h = harness(root), packet = task(root, 'missing-reviewed-base')
   await h.taskStore.createTask(packet)
   await assert.rejects(() => h.dispatcher.dispatch(packet.taskId), error => error.code === 'COLLABORATION_BASE_REQUIRED')
   assert.equal((await h.taskStore.getTask(packet.taskId)).status, 'QUEUED')
   assert.equal(h.worktreeManager.list().length, 0); fs.rmSync(root, { recursive: true, force: true })
+})
+
+await test('rejects unreviewed primary source changes before a read-only task is claimed', async () => {
+  const root = repository(), h = harness(root), packet = task(root, 'dirty-read-only', true)
+  await h.taskStore.createTask(packet)
+  fs.writeFileSync(path.join(root, 'unreviewed.txt'), 'unreviewed\n')
+  await assert.rejects(() => h.dispatcher.dispatch(packet.taskId, { baseSha: packet.contractPack.reviewedBaseSha }), error => error.code === 'COLLABORATION_DIRTY_PRIMARY')
+  assert.equal((await h.taskStore.getTask(packet.taskId)).status, 'QUEUED')
+  fs.rmSync(root, { recursive: true, force: true })
 })
 
 console.log(`\n== RESULT: ${passed} passed, 0 failed ==`)

@@ -31,7 +31,11 @@ States: `INITIALIZING`, `AUDITING`, `IMPLEMENTING`, `TESTING`, `REPAIRING`, `WAI
 
 The supervisor never treats a successful Codex exit as product completion. Completion requires `state/next-task.md` to contain `Status: COMPLETED`, which workers may write only after the acceptance contract is proven.
 
-Verification: `node scripts/autonomy/control-plane-tests.mjs` (8/8), `node scripts/autonomy/host-controller-tests.mjs` (6/6), and `zsh scripts/autonomy/test-supervisor.sh` (7/7).
+## Self-challenge and open-question ledger
+
+At every meaningful decision boundary, completed slice, security-sensitive change, surprising result, or major milestone, the lead performs a brief adversarial reflection: what assumption could be wrong, what evidence would disprove it, and whether the work advances the real objective rather than only satisfying the current test. A material unanswered question must be recorded in `docs/OPEN_QUESTIONS.md` with a stable ID, impact, current evidence, next evidence needed, owner, and review date. Questions are not silently deleted. They move through `OPEN`, `ANSWERED`, `CLOSED`, or `SUPERSEDED`; `ANSWERED` and `CLOSED` require cited repository evidence, while `SUPERSEDED` must name the replacing question or decision. Each relevant work slice reviews the ledger and closes entries when the required evidence exists. The owner can therefore request the current open-question inventory at any time without relying on conversation memory.
+
+Verification: `node scripts/autonomy/control-plane-tests.mjs` (8/8), `node scripts/autonomy/host-controller-tests.mjs` (6/6), `zsh scripts/autonomy/test-supervisor.sh` (7/7), and `node scripts/open-question-ledger-tests.mjs`.
 
 ## Multi-worker amendment
 
