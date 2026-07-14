@@ -8,7 +8,10 @@
 - Added disk-full failures before and after rename, explicit post-rename commit-uncertain tagging, 80-cycle bounded DAG soak, 250 checkpoint runs, 2,000-node planning, 300 fsync-backed replacements, and descriptor/temp cleanup.
 - The authoritative release verifier now passes 26/26 gates, including ten live browser/Axe/visual journeys. Latest receipt: `c93bf6510422459c919b873d644fc3ca615a74548c2b9f263210ff969fb600b6`.
 - Current implementation commits include `16de7d9`, `7e83f1a`, and `eef0420`. User-owned dirty `data/` files remain deliberately unstaged and unchanged by source commits.
-- Remaining current-scope operations: commit reconciled docs, publish the exact sanitized review snapshot, reload/verify the host, and obtain an owner-selected license before any open-source claim.
+- Reconciled documentation and truthful unavailable controls at `d0f7c04`.
+- Published sanitized review snapshot `2c9b2fb242923d1fe61a85fa88a1eed4b96767dd`; Gitleaks reported zero findings and disposable dependency/package/hardening/type/build verification passed.
+- Reloaded the product with host request `host-812838869a8d16f3` and receipt `1fdb6d6d740c796cd00fa5e0e924b33df194b1c45a241a97400fa87c0b491fc6`. Health and new APIs returned 200, hostile Host returned 403, and a disposable checkpoint-v2 workflow completed before cleanup.
+- Remaining current-scope decision: obtain an owner-selected license before any open-source claim.
 
 The earlier runtime checkpoint below is retained as historical evidence.
 
