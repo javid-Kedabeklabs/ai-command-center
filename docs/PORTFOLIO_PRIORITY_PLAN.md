@@ -30,8 +30,8 @@ At most 20% of active delivery time may be spent on factory improvements while a
 ## Current authoritative checkpoint
 
 - Local implementation and documentation reconciliation: `d0f7c04`.
-- Sanitized public review snapshot: `2c9b2fb242923d1fe61a85fa88a1eed4b96767dd` on `review/current-20260713`; Gitleaks found zero leaks, pinned dependency install found zero vulnerabilities, and package/hardening/type/build checks passed in a disposable detached worktree.
-- Host reload request `host-812838869a8d16f3`, receipt SHA-256 `1fdb6d6d740c796cd00fa5e0e924b33df194b1c45a241a97400fa87c0b491fc6`: health 200, hostile Host 403, evaluation/learning APIs 200, and a disposable workflow completed with checkpoint schema v2/revision 4 before cleanup.
+- Sanitized public review snapshot: `377e377f64deaff07b9e8aeafcfab32246ac5d9e` on `review/current-20260713`; it excludes every `data/` path, Gitleaks found zero leaks, and unauthenticated `git ls-remote` confirmed the public branch.
+- Host reload request `host-a573eebef60132e7`, receipt SHA-256 `69b60a38c967acfc7a8d719126b8f70414d09e411593f3131a23bc6e8ae435f6`: health 200 after two attempts; system, Agent Architecture, migration preview, and Company World APIs returned 200; hostile Host returned 403; live architecture remained revision 0 with no automatic migration.
 - Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, and enterprise deterministic hardening are verified by the 26-gate release contract.
 - Only legal open-source designation is blocked: the package remains `UNLICENSED` until the owner selects a license.
 
