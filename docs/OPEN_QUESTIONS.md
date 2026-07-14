@@ -63,3 +63,15 @@ Allowed states: `OPEN`, `ANSWERED`, `CLOSED`, `SUPERSEDED`.
 - Current evidence: The current six-case baseline is recorded; replacement remains gated and no candidate has cleared it.
 - Next evidence needed: Complete the same repo-specific benchmark for the candidate and apply the declared promotion thresholds.
 - Resolution evidence: Pending in `docs/LOCAL_MODEL_FACTORY.md` and benchmark receipts.
+
+## Q-0006 — Should terminal schema-v1 collaboration records be upgraded in place?
+
+- Status: CLOSED
+- Opened: 2026-07-13
+- Last reviewed: 2026-07-13
+- Owner: Codex
+- Question: Live status reported four legacy packets; should the runtime rewrite all four into schema v2 so the upgrade count reaches zero?
+- Why it matters: Rewriting completed or failed task packets would alter durable audit evidence without making any task dispatchable.
+- Current evidence: All four live v1 packets are terminal—three `FAILED` pilots and one `COMPLETED` review. None can transition to dispatch.
+- Next evidence needed: None.
+- Resolution evidence: `classifyTaskPacketCompatibility` in `server/collaboration/router.js` now counts only `QUEUED` or `BLOCKED` legacy packets as upgrade-required and preserves terminal v1 records as historical evidence; `scripts/collaboration-api-tests.mjs` verifies the classification.

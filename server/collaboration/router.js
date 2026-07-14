@@ -8,6 +8,18 @@ const publicLease = lease => ({
   branch: lease.branch, baseSha: lease.baseSha, createdAt: lease.createdAt,
   updatedAt: lease.updatedAt, endedAt: lease.endedAt || null,
 })
+const REQUEUEABLE_STATUSES = new Set(['QUEUED', 'BLOCKED'])
+
+export function classifyTaskPacketCompatibility(records, currentSchemaVersion = COLLABORATION_TASK_SCHEMA_VERSION) {
+  const packets = records.filter(Boolean)
+  const legacy = packets.filter(item => item.task?.schemaVersion !== currentSchemaVersion)
+  return Object.freeze({
+    contractComplete: packets.length - legacy.length,
+    legacyRecords: legacy.length,
+    upgradeRequired: legacy.filter(item => REQUEUEABLE_STATUSES.has(item.status)).length,
+    historicalLegacy: legacy.filter(item => !REQUEUEABLE_STATUSES.has(item.status)).length,
+  })
+}
 
 export function createCollaborationRouter({ taskStore, worktreeManager, metricsStore = null, liveDispatch = { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }, appendAudit = () => {} } = {}) {
   if (!taskStore || !worktreeManager) throw new Error('collaboration task store and worktree manager are required')
@@ -18,7 +30,7 @@ export function createCollaborationRouter({ taskStore, worktreeManager, metricsS
       await taskStore.initialize()
       const tasks = await taskStore.listTasks()
       const packets = await Promise.all(tasks.map(item => taskStore.getTask(item.taskId)))
-      const packetCounts = { contractComplete: packets.filter(item => item?.task?.schemaVersion === COLLABORATION_TASK_SCHEMA_VERSION).length, upgradeRequired: packets.filter(item => item?.task?.schemaVersion !== COLLABORATION_TASK_SCHEMA_VERSION).length }
+      const packetCounts = classifyTaskPacketCompatibility(packets)
       const counts = Object.fromEntries(['QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'BLOCKED', 'FAILED', 'CANCELLED'].map(status => [status, tasks.filter(item => item.status === status).length]))
       const leases = worktreeManager.list().map(publicLease)
       res.set('Cache-Control', 'no-store').json({

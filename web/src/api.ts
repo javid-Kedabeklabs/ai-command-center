@@ -69,7 +69,7 @@ export type LocalFactoryTaskSummary = { taskId: string; status: string; relative
 export type CollaborationStatus = {
   enabled: boolean; worktreeEnabled: boolean; worktreeUnavailableReason: string | null; dispatchEnabled: boolean; dispatchUnavailableReason: string | null
   dispatchContract: { schemaVersion: number; verified: boolean; prerequisites: string[] }
-  taskPacketContract: { currentSchemaVersion: number; legacyReadOnlyCompatibility: boolean; newLegacyPacketsAccepted: boolean; contractComplete: number; upgradeRequired: number }
+  taskPacketContract: { currentSchemaVersion: number; legacyReadOnlyCompatibility: boolean; newLegacyPacketsAccepted: boolean; contractComplete: number; legacyRecords: number; upgradeRequired: number; historicalLegacy: number }
   metrics: { schemaVersion: number; mode: string; observations: number; defects: number; byTaskClass: { taskType: string; worker: string; observations: number; accepted: number; firstPassRate: number | null; medianCalendarLeadSeconds: number | null; medianCodexBaselineSeconds: number | null; medianReviewSeconds: number | null; medianReworkSeconds: number | null; boundaryViolations: number; criticalDefects: number; recommendation: string; automaticAuthority: false }[]; qwen: { observations: number; acceptedFindingRate: number | null; falseBlockingFindings: number; medianReviewSeconds: number | null; recommendation: string; automaticAuthority: false } }
   policy: { centralRuntimeWriter: string; modifyingWorker: string; reviewer: string; automaticIntegration: boolean }
   counts: Record<string, number>; activeLeases: number; blockedLeases: number

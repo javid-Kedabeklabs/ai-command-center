@@ -2,7 +2,7 @@
 
 Claude Code is invoked only by the collaboration dispatcher for a validated task packet. The dispatcher uses the installed CLI help as its capability source and never assumes flags from another release.
 
-New task packets use schema v2 and are contract-complete before dispatch. Each packet freezes the exact reviewed Git base, acceptance-test commit, stable scenario IDs, exact SHA-256 hashes for read-only contract files, a 1–25 changed-file budget (zero for read-only work), a Codex-equivalent baseline estimate, and at least three stop conditions. Dispatch verifies that the base is the current repository HEAD, the test commit is its ancestor, and every frozen file still hashes exactly before creating a worktree or claiming the task. Legacy v1 records remain readable for recovery, but cannot be newly queued or dispatched.
+New task packets use schema v2 and are contract-complete before dispatch. Each packet freezes the exact reviewed Git base, acceptance-test commit, stable scenario IDs, exact SHA-256 hashes for read-only contract files, a 1–25 changed-file budget (zero for read-only work), a Codex-equivalent baseline estimate, and at least three stop conditions. Dispatch verifies that the base is the current repository HEAD, the test commit is its ancestor, and every frozen file still hashes exactly before creating a worktree or claiming the task. Legacy v1 records remain readable for recovery, but cannot be newly queued or dispatched. Status distinguishes requeueable legacy packets that require an explicit upgrade from terminal legacy records retained unchanged as historical evidence.
 
 ## Worker modes
 

@@ -6,7 +6,7 @@ import path from 'node:path'
 import express from 'express'
 import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
-import { createCollaborationRouter } from '../server/collaboration/router.js'
+import { classifyTaskPacketCompatibility, createCollaborationRouter } from '../server/collaboration/router.js'
 import { createCollaborationTaskStore } from '../server/collaboration/task-store.js'
 import { createWorktreeManager } from '../server/collaboration/worktree-manager.js'
 import { createDeliveryMetricsStore } from '../server/collaboration/delivery-metrics.js'
@@ -43,9 +43,16 @@ const test = async (name, fn) => { await fn(); passed++; console.log(`  PASS  ${
 
 console.log('== collaboration control-plane API ==')
 try {
+  await test('distinguishes terminal legacy evidence from packets that require upgrade', () => {
+    const result = classifyTaskPacketCompatibility([
+      { status: 'FAILED', task: { schemaVersion: 1 } }, { status: 'COMPLETED', task: { schemaVersion: 1 } },
+      { status: 'BLOCKED', task: { schemaVersion: 1 } }, { status: 'QUEUED', task: { schemaVersion: 2 } },
+    ])
+    assert.deepEqual(result, { contractComplete: 1, legacyRecords: 3, upgradeRequired: 1, historicalLegacy: 2 })
+  })
   await test('reports a sanitized non-dispatching control plane', async () => {
     const { response, body } = await request('/status')
-    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.taskPacketContract.currentSchemaVersion, 2); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
+    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.taskPacketContract.currentSchemaVersion, 2); assert.equal(body.taskPacketContract.historicalLegacy, 0); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
     assert.equal(JSON.stringify(body).includes(root), false)
   })
   await test('requires explicit mutation intent and validates task packets', async () => {
