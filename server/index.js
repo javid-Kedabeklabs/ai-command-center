@@ -52,6 +52,7 @@ import { createCollaborationTaskStore } from './collaboration/task-store.js'
 import { createWorktreeManager } from './collaboration/worktree-manager.js'
 import { createCollaborationRouter } from './collaboration/router.js'
 import { createLiveCollaborationDispatch } from './collaboration/live-dispatch.js'
+import { createDeliveryMetricsStore } from './collaboration/delivery-metrics.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -76,6 +77,7 @@ const ORGANIZATION_FILE = path.join(DATA, 'organization.json')
 const governanceCandidates = createCandidateStore({ file: GOVERNANCE_CANDIDATES_FILE })
 const governanceLifecycle = createLifecycleStore({ file: GOVERNANCE_LIFECYCLE_FILE })
 const collaborationTaskStore = createCollaborationTaskStore({ repositoryRoot: ROOT })
+const collaborationMetricsStore = createDeliveryMetricsStore({ repositoryRoot: ROOT })
 let collaborationWorktrees
 try { collaborationWorktrees = Object.assign(createWorktreeManager({ repositoryRoot: ROOT }), { available: true }) }
 catch (error) {
@@ -3245,7 +3247,7 @@ const triggerService = createTriggerService({
 
 const localModelFactory = createLocalModelFactory({ repositoryRoot: ROOT, endpoint: LMSTUDIO, concurrency: 4, maxQueue: 100 })
 app.use('/api/local-factory', createLocalFactoryRouter({ factory: localModelFactory, appendAudit }))
-app.use('/api/collaboration', createCollaborationRouter({ taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, liveDispatch: liveCollaborationDispatch, appendAudit }))
+app.use('/api/collaboration', createCollaborationRouter({ taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, metricsStore: collaborationMetricsStore, liveDispatch: liveCollaborationDispatch, appendAudit }))
 
 // ---------- static UI ----------
 const DIST = path.join(ROOT, 'dist')

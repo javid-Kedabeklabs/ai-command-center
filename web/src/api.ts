@@ -69,6 +69,7 @@ export type LocalFactoryTaskSummary = { taskId: string; status: string; relative
 export type CollaborationStatus = {
   enabled: boolean; worktreeEnabled: boolean; worktreeUnavailableReason: string | null; dispatchEnabled: boolean; dispatchUnavailableReason: string | null
   dispatchContract: { schemaVersion: number; verified: boolean; prerequisites: string[] }
+  metrics: { schemaVersion: number; mode: string; observations: number; defects: number; byTaskClass: { taskType: string; worker: string; observations: number; accepted: number; firstPassRate: number | null; medianCalendarLeadSeconds: number | null; medianCodexBaselineSeconds: number | null; medianReviewSeconds: number | null; medianReworkSeconds: number | null; boundaryViolations: number; criticalDefects: number; recommendation: string; automaticAuthority: false }[]; qwen: { observations: number; acceptedFindingRate: number | null; falseBlockingFindings: number; medianReviewSeconds: number | null; recommendation: string; automaticAuthority: false } }
   policy: { centralRuntimeWriter: string; modifyingWorker: string; reviewer: string; automaticIntegration: boolean }
   counts: Record<string, number>; activeLeases: number; blockedLeases: number
   leaseRecovery: { recovered: string[]; blocked: string[]; missing: string[] }
@@ -96,6 +97,7 @@ export const api = {
   collaborationTasks: (): Promise<CollaborationTaskSummary[]> => fetch('/api/collaboration/tasks', { cache: 'no-store' }).then(j),
   collaborationLeases: (): Promise<CollaborationLease[]> => fetch('/api/collaboration/leases', { cache: 'no-store' }).then(j),
   collaborationTask: (taskId: string): Promise<any> => fetch(`/api/collaboration/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' }).then(j),
+  collaborationMetrics: (): Promise<any> => fetch('/api/collaboration/metrics', { cache: 'no-store' }).then(j),
   saveCollaborationTask: (packet: Record<string, unknown>): Promise<any> => fetch('/api/collaboration/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Command-Center-Intent': 'collaboration-task-change' }, body: JSON.stringify(packet) }).then(j),
   models: (): Promise<Model[]> => fetch('/api/models').then(j),
   load: (id: string, context: number) =>

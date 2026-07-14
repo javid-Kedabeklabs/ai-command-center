@@ -30,9 +30,10 @@ At most 20% of active delivery time may be spent on factory improvements while a
 ## Current authoritative checkpoint
 
 - Local collaboration implementation checkpoint: `c71819825644745d2142e3cfba625d6dd3808fa0`; durable leases, sanitized control-plane APIs, atomic ownership, sparse sensitive-tree exclusion, owned-process/model/commit provenance, fail-closed compensation, and terminal receipts are committed without automatic integration.
-- Sanitized public review snapshot before the pending dispatch slice: `3b81819bff0637899cce896731d650cb57047940` on `review/current-20260713`; it excludes every `data/` path, Gitleaks found zero leaks, and unauthenticated `git ls-remote` confirmed the public branch.
+- Sanitized public review snapshot: `1a7cb04368fc1359eecef3724c0acd0c3dd81292` on `review/current-20260713`; it excludes every `data/` path, Gitleaks found zero leaks across 2.28 MB, and `git ls-remote` independently confirmed the public branch SHA.
 - Host reload request `host-c3e0040a122fdff9`, receipt SHA-256 `9eda563b6a20f380ff0df45880b7fec8f5ffd1fd8b06b0a9e4cf3d46452c2524`: health returned 200 after two attempts; live collaboration status exposes the verified dispatch contract while dispatch remains owner-disabled and integration remains false; tasks and leases returned 200; hostile Host returned 403.
-- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, Agent Architecture, collaboration persistence/API, fixture-proven dispatch, and enterprise deterministic hardening are verified by the 31-gate release contract with twelve browser journeys. Receipt: `0918dac2aca2f341475ee35acfb16bfdd7b6b8f5830de8705e644d3e3bd860b4`.
+- Accepted-delivery metrics checkpoint: `274a0418fb779d5ac37806069001d9d2fdc969e4`; host request `host-8f0a2b9362fc321a`, receipt `40ea952ffdd6020a3da46dea4d2f6f5326279a4e30cec639657201bbecaec2f9`. Live metrics are `SHADOW_ONLY` with zero observations/defects and no automatic authority; hostile Host returned 403.
+- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, Agent Architecture, collaboration persistence/API, fixture-proven dispatch, shadow accepted-delivery metrics, and enterprise deterministic hardening are verified by the 32-gate release contract with twelve browser journeys. Receipt: `fc5df2008429e49e7321bd27502418be848d82d52d3238d43811a1f66224a51d`.
 - Only legal open-source designation is blocked: the package remains `UNLICENSED` until the owner selects a license.
 
 The P0–P2 tables below are retained as the dependency rationale that produced the implementation. They are no longer an open-work queue. Current remaining v1 work is the owner’s license choice. P3/P4 remain separately measured or deferred enhancements.
@@ -92,7 +93,7 @@ These can proceed only in non-overlapping files after the relevant interface is 
 - Approval/pause browser states after API/schema freeze.
 - Qwen read-only sink/effect/capability inventory with exact source citations.
 - Request/evidence/symlink adversarial test cases.
-- Per-task delegation metrics collection.
+- Per-task delegation metrics collection is now implemented as a shadow-only, atomic, receipt-derived observation store; comparable real task observations still need to accumulate before any route becomes eligible.
 
 Do not let parallel preparation invent a competing checkpoint, approval, or security contract.
 
@@ -130,7 +131,7 @@ These are valuable, but must not become the product.
 | Qwen cited pre-review gate | Needs comparable patch/review metrics | At least 20 categorized tasks | Lead review time −20%, material finding acceptance ≥25%, false-positive overhead <5 min/patch | 20–30 patch shadow test |
 | Repo-specific local-model benchmark | Public benchmarks do not predict this repository | Frozen hidden task corpus and incumbent baseline | Security/schema/citation gates plus ≥15% faster accepted output or clear quality win | 40–50 tasks |
 | Contract-complete task packets | Needs stable seam ownership and acceptance schemas | P0 contracts frozen | First-pass acceptance +10 points or review/rework −25% | 20 matched tasks |
-| Delegation router | Needs enough observations per task class | ≥12–20 comparable tasks per route | ≥15% lower accepted cycle time, no defect regression | Shadow decisions only |
+| Delegation router | Shadow metrics and conservative eligibility are implemented; authority remains disabled | ≥12–20 comparable tasks per route | ≥15% lower accepted cycle time, ≥80% first-pass acceptance, zero boundary/S1/S2 regression | Accumulate observations only |
 | Failure-learning artifacts | Needs authoritative failure classes and blocker fingerprints | P0 reducer/effects implemented | Historical replay + independent review + low-risk canary | One task class |
 | Context caching | Server/version support and hit-rate are unknown | Repeatable prompt-prefix benchmark | ≥15% end-to-end loop reduction without memory-pressure regression | Local A/B only |
 

@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { createCollaborationRouter } from '../server/collaboration/router.js'
 import { createCollaborationTaskStore } from '../server/collaboration/task-store.js'
 import { createWorktreeManager } from '../server/collaboration/worktree-manager.js'
+import { createDeliveryMetricsStore } from '../server/collaboration/delivery-metrics.js'
 
 const git = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'command-center-collaboration-api-'))
@@ -17,8 +18,9 @@ fs.writeFileSync(path.join(root, 'src', 'fixture.txt'), 'base\n')
 git(root, ['init', '-q']); git(root, ['config', 'user.email', 'fixture@example.invalid']); git(root, ['config', 'user.name', 'Fixture']); git(root, ['add', '.']); git(root, ['commit', '-qm', 'base'])
 const taskStore = createCollaborationTaskStore({ repositoryRoot: root })
 const worktreeManager = createWorktreeManager({ repositoryRoot: root })
+const metricsStore = createDeliveryMetricsStore({ repositoryRoot: root })
 const audits = []
-const app = express(); app.use(express.json()); app.use('/api/collaboration', createCollaborationRouter({ taskStore, worktreeManager, appendAudit: (...entry) => audits.push(entry) }))
+const app = express(); app.use(express.json()); app.use('/api/collaboration', createCollaborationRouter({ taskStore, worktreeManager, metricsStore, appendAudit: (...entry) => audits.push(entry) }))
 const server = http.createServer(app)
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api/collaboration`
@@ -39,7 +41,7 @@ console.log('== collaboration control-plane API ==')
 try {
   await test('reports a sanitized non-dispatching control plane', async () => {
     const { response, body } = await request('/status')
-    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.policy.centralRuntimeWriter, 'codex')
+    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.metrics.mode, 'SHADOW_ONLY'); assert.equal(body.metrics.observations, 0); assert.equal(body.policy.centralRuntimeWriter, 'codex')
     assert.equal(JSON.stringify(body).includes(root), false)
   })
   await test('requires explicit mutation intent and validates task packets', async () => {
@@ -64,6 +66,12 @@ try {
   await test('keeps live dispatch disabled even with explicit mutation intent', async () => {
     const result = await request(`/tasks/${packet.taskId}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-command-center-intent': 'collaboration-dispatch' }, body: '{}' })
     assert.equal(result.response.status, 409); assert.equal(result.body.code, 'COLLABORATION_DISPATCH_DISABLED'); assert.equal(result.body.dispatchEnabled, false)
+  })
+  await test('exposes empty shadow metrics and denies unproven outcome recording', async () => {
+    const metrics = await request('/metrics')
+    assert.equal(metrics.response.status, 200); assert.equal(metrics.body.summary.mode, 'SHADOW_ONLY'); assert.deepEqual(metrics.body.observations, [])
+    const denied = await request('/metrics/outcomes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    assert.equal(denied.response.status, 400)
   })
 } finally {
   server.close(); await new Promise(resolve => server.once('close', resolve)); fs.rmSync(root, { recursive: true, force: true })

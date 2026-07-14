@@ -8,7 +8,7 @@ const publicLease = lease => ({
   updatedAt: lease.updatedAt, endedAt: lease.endedAt || null,
 })
 
-export function createCollaborationRouter({ taskStore, worktreeManager, liveDispatch = { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }, appendAudit = () => {} } = {}) {
+export function createCollaborationRouter({ taskStore, worktreeManager, metricsStore = null, liveDispatch = { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }, appendAudit = () => {} } = {}) {
   if (!taskStore || !worktreeManager) throw new Error('collaboration task store and worktree manager are required')
   const router = express.Router()
 
@@ -25,6 +25,7 @@ export function createCollaborationRouter({ taskStore, worktreeManager, liveDisp
         dispatchEnabled: liveDispatch.enabled === true,
         dispatchUnavailableReason: liveDispatch.enabled ? null : liveDispatch.reason,
         dispatchContract: { schemaVersion: 1, verified: true, prerequisites: ['explicit-owner-command', 'reviewed-clean-base', 'available-fable-capacity', 'verified-worktree-lease', 'owned-process-receipt', 'codex-integration-review'] },
+        metrics: metricsStore ? await metricsStore.summary() : { schemaVersion: 1, mode: 'UNAVAILABLE', observations: 0, defects: 0, byTaskClass: [], qwen: { observations: 0, acceptedFindingRate: null, falseBlockingFindings: 0, medianReviewSeconds: null, recommendation: 'INSUFFICIENT_OR_NONQUALIFYING_EVIDENCE', automaticAuthority: false } },
         policy: { centralRuntimeWriter: 'codex', modifyingWorker: 'claude-fable', reviewer: 'qwen-read-only', automaticIntegration: false },
         counts, activeLeases: leases.filter(item => item.state === 'ACTIVE').length,
         blockedLeases: leases.filter(item => item.state === 'BLOCKED').length,
@@ -50,6 +51,12 @@ export function createCollaborationRouter({ taskStore, worktreeManager, liveDisp
     res.set('Cache-Control', 'no-store').json(worktreeManager.list().map(publicLease))
   })
 
+  router.get('/metrics', async (_req, res) => {
+    if (!metricsStore) return res.status(503).json({ error: 'collaboration delivery metrics are unavailable', code: 'COLLABORATION_METRICS_UNAVAILABLE' })
+    try { res.set('Cache-Control', 'no-store').json({ summary: await metricsStore.summary(), observations: await metricsStore.list() }) }
+    catch (error) { res.status(503).json(publicError(error)) }
+  })
+
   router.post('/tasks', requireMutationIntent('collaboration-task-change'), async (req, res) => {
     try {
       const result = await taskStore.createTask(req.body, { source: 'local-control-plane', dispatchAuthorized: false })
@@ -70,6 +77,25 @@ export function createCollaborationRouter({ taskStore, worktreeManager, liveDisp
     })
     appendAudit('collaboration_dispatch_requested', { taskId: req.params.taskId, baseSha })
     res.status(202).set('Cache-Control', 'no-store').json({ accepted: true, taskId: req.params.taskId, dispatchEnabled: true })
+  })
+
+  router.post('/metrics/outcomes', requireMutationIntent('collaboration-metrics-change'), async (req, res) => {
+    if (!metricsStore) return res.status(503).json({ error: 'collaboration delivery metrics are unavailable', code: 'COLLABORATION_METRICS_UNAVAILABLE' })
+    try {
+      const task = await taskStore.getTask(req.body?.taskId), lease = worktreeManager.get?.(req.body?.taskId) || null
+      const result = await metricsStore.recordOutcome(req.body, { taskRecord: task, lease })
+      appendAudit('collaboration_delivery_outcome_recorded', { taskId: result.observation.taskId, outcome: result.observation.outcome, duplicate: result.duplicate, observationId: result.observation.observationId })
+      res.status(result.duplicate ? 200 : 201).set('Cache-Control', 'no-store').json(result)
+    } catch (error) { res.status(error.code?.includes('CONFLICT') || error.code?.includes('RECORDED') ? 409 : 400).json(publicError(error)) }
+  })
+
+  router.post('/metrics/defects', requireMutationIntent('collaboration-metrics-change'), async (req, res) => {
+    if (!metricsStore) return res.status(503).json({ error: 'collaboration delivery metrics are unavailable', code: 'COLLABORATION_METRICS_UNAVAILABLE' })
+    try {
+      const result = await metricsStore.recordDefect(req.body)
+      appendAudit('collaboration_escaped_defect_recorded', { taskId: result.defect.taskId, severity: result.defect.severity, attributed: result.defect.attributed, duplicate: result.duplicate })
+      res.status(result.duplicate ? 200 : 201).set('Cache-Control', 'no-store').json(result)
+    } catch (error) { res.status(error.code?.includes('CONFLICT') ? 409 : 400).json(publicError(error)) }
   })
 
   return router
