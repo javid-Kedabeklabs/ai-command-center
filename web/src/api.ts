@@ -66,6 +66,14 @@ export type Profile = { id: string; name: string; roles: Record<string, string> 
 export type ProfilesResp = { profiles: Profile[]; roles: string[] }
 export type LocalFactoryStatus = { enabled: boolean; model: string; endpoint: string; concurrency: number; maxQueue: number; queued: number; active: number; completed: number; closed: boolean }
 export type LocalFactoryTaskSummary = { taskId: string; status: string; relativePath: string; createdAt: number; updatedAt: number }
+export type CollaborationStatus = {
+  enabled: boolean; worktreeEnabled: boolean; worktreeUnavailableReason: string | null; dispatchEnabled: boolean
+  policy: { centralRuntimeWriter: string; modifyingWorker: string; reviewer: string; automaticIntegration: boolean }
+  counts: Record<string, number>; activeLeases: number; blockedLeases: number
+  leaseRecovery: { recovered: string[]; blocked: string[]; missing: string[] }
+}
+export type CollaborationTaskSummary = { taskId: string; status: string; relativePath: string; createdAt: number; updatedAt: number; dispatchId?: string | null }
+export type CollaborationLease = { taskId: string; state: string; reason: string | null; branch: string; baseSha: string; createdAt: number; updatedAt: number; endedAt: number | null }
 
 const j = async (r: Response) => {
   if (r.ok) return r.json()
@@ -83,6 +91,11 @@ export const api = {
   localFactoryTasks: (): Promise<LocalFactoryTaskSummary[]> => fetch('/api/local-factory/tasks').then(j),
   localFactoryTask: (taskId: string): Promise<any> => fetch(`/api/local-factory/tasks/${encodeURIComponent(taskId)}`).then(j),
   cancelLocalFactoryTask: (taskId: string): Promise<{ ok: boolean; taskId: string }> => fetch(`/api/local-factory/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }).then(j),
+  collaborationStatus: (): Promise<CollaborationStatus> => fetch('/api/collaboration/status', { cache: 'no-store' }).then(j),
+  collaborationTasks: (): Promise<CollaborationTaskSummary[]> => fetch('/api/collaboration/tasks', { cache: 'no-store' }).then(j),
+  collaborationLeases: (): Promise<CollaborationLease[]> => fetch('/api/collaboration/leases', { cache: 'no-store' }).then(j),
+  collaborationTask: (taskId: string): Promise<any> => fetch(`/api/collaboration/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' }).then(j),
+  saveCollaborationTask: (packet: Record<string, unknown>): Promise<any> => fetch('/api/collaboration/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Command-Center-Intent': 'collaboration-task-change' }, body: JSON.stringify(packet) }).then(j),
   models: (): Promise<Model[]> => fetch('/api/models').then(j),
   load: (id: string, context: number) =>
     fetch('/api/models/load', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, context }) }).then(j),

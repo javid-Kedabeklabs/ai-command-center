@@ -212,7 +212,7 @@ Every phase records UI, persistence, runtime, permissions, errors, tests, rollba
 - Dependency: a reviewed clean collaboration base; the current dirty checkout must not be treated as represented by `HEAD`.
 - Order: CLI/auth audit; task/state/file-ownership foundation; fixture-tested read-only bridge; one low-risk isolated-worktree pilot; shared skills/subagents; conservative parallelism; UI/API; supervisor integration.
 - Limits: initially one modifying Claude worker, no overlapping ownership, no simultaneous schema/package-lock/`server/index.js`/`WorkflowStudio.tsx` edits, no automatic integration, and no live paid call in the standard suite.
-- Pilot evidence: the first Fable test-only worktree pilot is integrated after actual-model provenance, scope inspection, focused checks, production build, and Codex review. Broader modifying tasks remain gated on durable lease/restart recovery.
+- Pilot evidence: the first Fable test-only worktree pilot is integrated after actual-model provenance, scope inspection, focused checks, production build, and Codex review. Durable lease/restart recovery and a truthful non-dispatching Collaboration Center are now verified. Broader modifying tasks remain gated on an atomic task→lease→owned-process dispatch receipt and measured acceptance/rework evidence.
 
 #### Phase 1D — controlled local model factory amendment
 

@@ -13,10 +13,11 @@ import {
   type Profile, type ProfilesResp, type Template, type RunSummary as RunSum, type RunDetail, type RunEvidence, type Artifact,
   type KnowledgeSource, type KnowledgeHit, type ToolInfo, type Skill,
   type LocalFactoryStatus, type LocalFactoryTaskSummary,
+  type CollaborationStatus, type CollaborationTaskSummary, type CollaborationLease,
 } from './api'
 import { WorkflowStudioV2 } from './WorkflowStudio'
 
-type Page = 'home' | 'templates' | 'runs' | 'results' | 'knowledge' | 'skills' | 'dashboard' | 'models' | 'chat' | 'agents' | 'brain' | 'studio' | 'pipelines' | 'mcp' | 'evaluations' | 'world' | 'extensions' | 'factory'
+type Page = 'home' | 'templates' | 'runs' | 'results' | 'knowledge' | 'skills' | 'dashboard' | 'models' | 'chat' | 'agents' | 'brain' | 'studio' | 'pipelines' | 'mcp' | 'evaluations' | 'world' | 'extensions' | 'factory' | 'collaboration'
 
 /* ---------- complexity modes: presentation-only; never changes workflow logic ---------- */
 export type Mode = 'easy' | 'guided' | 'pro' | 'developer'
@@ -53,6 +54,7 @@ const NAV: { key: Page; icon: string; label: string; easyLabel?: string; group: 
   { key: 'mcp', icon: '🔌', label: 'Tools', group: 'advanced' },
   { key: 'evaluations', icon: '✓', label: 'Evaluation Lab', group: 'advanced' },
   { key: 'factory', icon: '▦', label: 'Local Worker Factory', group: 'advanced' },
+  { key: 'collaboration', icon: '⇄', label: 'AI Collaboration', group: 'advanced' },
   { key: 'extensions', icon: '▣', label: 'Extensions', group: 'advanced' },
 ]
 
@@ -121,6 +123,7 @@ export default function App() {
           {page === 'mcp' && <Tools />}
           {page === 'evaluations' && <EvaluationLab />}
           {page === 'factory' && <LocalWorkerFactory />}
+          {page === 'collaboration' && <CollaborationCenter />}
           {page === 'extensions' && <ExtensionCenter />}
           {page === 'dashboard' && <Dashboard sys={sys} />}
           {page === 'models' && <Models sys={sys} />}
@@ -179,6 +182,42 @@ function LocalWorkerFactory() {
       <AtLeast mode="developer"><div className="card" style={{ marginTop: 16 }}><h3>Enforced operating policy</h3><p className="sub">Loopback LM Studio only · pinned qwen-coder-factory model · exact allowlisted context files · strict structured output · bounded tokens, bytes, queue, timeout, and concurrency · no tools or direct repository writes.</p><div className="meta">Active or queued records: {active.length} · API: /api/local-factory</div></div></AtLeast>
     </div>
   )
+}
+
+function CollaborationCenter() {
+  const [status, setStatus] = useState<CollaborationStatus | null>(null)
+  const [tasks, setTasks] = useState<CollaborationTaskSummary[]>([])
+  const [leases, setLeases] = useState<CollaborationLease[]>([])
+  const [error, setError] = useState('')
+  const refresh = useCallback(async () => {
+    try {
+      const [nextStatus, nextTasks, nextLeases] = await Promise.all([api.collaborationStatus(), api.collaborationTasks(), api.collaborationLeases()])
+      setStatus(nextStatus); setTasks(nextTasks); setLeases(nextLeases); setError('')
+    } catch (value) { setError(String(value)) }
+  }, [])
+  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 3_000); return () => window.clearInterval(timer) }, [refresh])
+  const waiting = (status?.counts.QUEUED || 0) + (status?.counts.RUNNING || 0)
+  const review = (status?.counts.BLOCKED || 0) + (status?.counts.PARTIAL || 0) + (status?.counts.FAILED || 0)
+  return <div data-testid="collaboration-center">
+    <p className="sub" style={{ marginBottom: 16 }}>Codex owns architecture and integration. Fable implements bounded packets in isolated worktrees. Qwen reviews read-only. Every worker result remains review-gated.</p>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    <div className="grid cols-4">
+      <div className="card home-stat"><h3>Control plane</h3><div className="stat">{status?.enabled ? 'Ready' : '–'}</div><div className="sub">durable task records</div></div>
+      <div className="card home-stat"><h3>Active work</h3><div className="stat">{waiting}</div><div className="sub">queued or running packets</div></div>
+      <div className="card home-stat"><h3>Worktree leases</h3><div className="stat">{status?.activeLeases ?? 0}</div><div className="sub">{status?.blockedLeases ?? 0} blocked after review/recovery</div></div>
+      <div className="card home-stat"><h3>Needs review</h3><div className="stat">{review}</div><div className="sub">never retried or integrated blindly</div></div>
+    </div>
+    <div className="plain-callout" style={{ marginTop: 16 }}><b>Safe operating boundary</b><p>Task packets can be validated and persisted through the local API. Live dispatch remains disabled until a reviewed lease, owned process, model provenance, and explicit integration command are connected end to end.</p><small>Automatic integration: {status?.policy.automaticIntegration ? 'enabled' : 'disabled'} · Worktrees: {status?.worktreeEnabled ? 'source checkout ready' : 'unavailable in packaged install'} · Network access: disabled · Subagents: disabled</small></div>
+    <div className="section-title">Fable task packets</div>
+    <div className="rows" aria-label="Fable task packets">
+      {!tasks.length && <div className="empty">No collaboration task packets yet.</div>}
+      {tasks.map(task => <div className="row" key={task.taskId}><span className={`dot-s ${task.status === 'COMPLETED' ? 'loaded' : task.status === 'RUNNING' ? 'loading' : 'disk'}`} /><div><div className="name">{task.taskId}</div><div className="meta">{task.status} · updated {new Date(task.updatedAt).toLocaleString()}</div></div></div>)}
+    </div>
+    <AtLeast mode="developer"><div className="section-title">Durable worktree leases</div><div className="rows" aria-label="Durable worktree leases">
+      {!leases.length && <div className="empty">No registered Fable worktrees.</div>}
+      {leases.map(lease => <div className="row" key={lease.taskId}><span className={`dot-s ${lease.state === 'ACTIVE' ? 'loading' : lease.state === 'BLOCKED' ? 'disk' : 'loaded'}`} /><div><div className="name">{lease.taskId}</div><div className="meta">{lease.state}{lease.reason ? ` · ${lease.reason}` : ''} · {lease.branch}</div></div></div>)}
+    </div></AtLeast>
+  </div>
 }
 
 function CommandPalette({ nav, onGo, onClose }: { nav: typeof NAV; onGo: (p: string) => void; onClose: () => void }) {

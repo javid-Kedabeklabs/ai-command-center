@@ -4,6 +4,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { patternsOverlap } from './conflict-detector.js'
 import { validateTaskPacket } from './task-schema.js'
+import { atomicWriteJsonSync } from '../storage/atomic-json.js'
 
 const safeTaskId = value => {
   const id = String(value || '').trim()
@@ -41,6 +42,26 @@ function changedFiles(repository, baseSha, headSha) {
   return output ? output.split('\0').filter(Boolean) : []
 }
 
+const LEASE_STATES = new Set(['ACTIVE', 'INACTIVE', 'BLOCKED', 'INTEGRATED', 'REJECTED'])
+
+function leaseError(message) {
+  return Object.assign(new Error(`collaboration worktree lease store is corrupt: ${message}`), { code: 'COLLABORATION_LEASE_STORE_CORRUPT' })
+}
+
+function parseWorktreeList(repository) {
+  const output = git(repository, ['worktree', 'list', '--porcelain'], { trim: false })
+  const result = new Map()
+  let current = null
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      current = { path: fs.realpathSync(line.slice(9)), headSha: null, branch: null }
+      result.set(current.path, current)
+    } else if (current && line.startsWith('HEAD ')) current.headSha = line.slice(5)
+    else if (current && line.startsWith('branch refs/heads/')) current.branch = line.slice(18)
+  }
+  return result
+}
+
 function validateChangedPath(worktreeRoot, relativePath) {
   if (!relativePath || path.isAbsolute(relativePath) || relativePath.split('/').some(part => part === '..' || part === '.')) throw new Error('Git returned an unsafe changed path')
   const candidate = path.resolve(worktreeRoot, relativePath)
@@ -52,7 +73,7 @@ function validateChangedPath(worktreeRoot, relativePath) {
   return relativePath
 }
 
-export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join(repositoryRoot, '.claude', 'worktrees') }) {
+export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join(repositoryRoot, '.claude', 'worktrees'), leaseFile = path.join(repositoryRoot, 'state', 'collaboration', 'worktree-leases.json'), now = () => Date.now() }) {
   const repositoryInput = path.resolve(repositoryRoot)
   const configuredInput = path.resolve(worktreeRoot)
   const requiredInput = path.join(repositoryInput, '.claude', 'worktrees')
@@ -64,7 +85,67 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
   fs.mkdirSync(configured, { recursive: true, mode: 0o700 })
   const canonicalWorktrees = fs.realpathSync(configured)
   if (!inside(repository, canonicalWorktrees)) throw new Error('worktree root resolves outside repository')
+  const leasesPath = path.resolve(repository, path.relative(repositoryInput, path.resolve(leaseFile)))
+  if (!inside(repository, leasesPath) || fs.existsSync(leasesPath) && fs.lstatSync(leasesPath).isSymbolicLink()) throw Object.assign(new Error('worktree lease file must be a regular path inside the repository'), { code: 'COLLABORATION_PATH_OUTSIDE_REPOSITORY' })
   const records = new Map()
+
+  function persistedRecord(record) {
+    return {
+      schemaVersion: 1, taskId: record.taskId, branch: record.branch,
+      relativePath: path.relative(repository, record.path).split(path.sep).join('/'),
+      baseSha: record.baseSha, primaryHeadAtCreation: record.primaryHeadAtCreation,
+      createdAt: record.createdAt, updatedAt: record.updatedAt, endedAt: record.endedAt || null,
+      state: record.state, reason: record.reason || null,
+    }
+  }
+
+  function persist() {
+    atomicWriteJsonSync(leasesPath, {
+      schemaVersion: 1, revision: Math.max(1, ...[...records.values()].map(item => Number(item.revision) || 1)),
+      updatedAt: now(), leases: Object.fromEntries([...records.entries()].map(([id, record]) => [id, persistedRecord(record)])),
+    })
+  }
+
+  function hydrate(raw) {
+    if (!raw || raw.schemaVersion !== 1 || !raw.leases || typeof raw.leases !== 'object' || Array.isArray(raw.leases)) throw leaseError('invalid root document')
+    for (const [id, item] of Object.entries(raw.leases)) {
+      try {
+        if (safeTaskId(id) !== item.taskId || safeBranch(item.branch) !== item.branch || !LEASE_STATES.has(item.state)) throw new Error('invalid lease identity or state')
+        if (typeof item.relativePath !== 'string' || path.isAbsolute(item.relativePath) || item.relativePath.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('invalid relative path')
+        const candidate = path.resolve(repository, item.relativePath)
+        if (!inside(canonicalWorktrees, candidate)) throw new Error('lease path escapes collaboration root')
+        for (const sha of [item.baseSha, item.primaryHeadAtCreation]) if (!/^[a-f0-9]{40,64}$/.test(String(sha || ''))) throw new Error('invalid commit identity')
+        records.set(id, Object.freeze({ ...item, path: candidate, active: item.state === 'ACTIVE', revision: Number(raw.revision) || 1 }))
+      } catch (error) { throw leaseError(`${id}: ${error.message}`) }
+    }
+  }
+
+  function reconcile() {
+    if (!fs.existsSync(leasesPath)) return { recovered: [], blocked: [], missing: [] }
+    let raw
+    try { raw = JSON.parse(fs.readFileSync(leasesPath, 'utf8')); hydrate(raw) }
+    catch (error) { throw error.code === 'COLLABORATION_LEASE_STORE_CORRUPT' ? error : leaseError(error.message) }
+    const registered = parseWorktreeList(repository), recovered = [], blocked = [], missing = []
+    for (const [id, record] of records) {
+      if (!['ACTIVE', 'INACTIVE'].includes(record.state)) continue
+      const actual = fs.existsSync(record.path) ? registered.get(fs.realpathSync(record.path)) : null
+      let reason = null
+      if (!actual) { reason = 'WORKTREE_MISSING'; missing.push(id) }
+      else if (actual.branch !== record.branch) reason = 'BRANCH_MISMATCH'
+      else {
+        const mergeBase = git(record.path, ['merge-base', record.baseSha, actual.headSha])
+        if (mergeBase !== record.baseSha) reason = 'BASE_MISMATCH'
+      }
+      const nextState = reason || record.state === 'ACTIVE' ? 'BLOCKED' : 'INACTIVE'
+      const nextReason = reason || (record.state === 'ACTIVE' ? 'ORPHANED_AFTER_RESTART' : record.reason)
+      records.set(id, Object.freeze({ ...record, state: nextState, active: false, reason: nextReason, updatedAt: now(), endedAt: record.endedAt || now(), revision: record.revision + 1 }))
+      if (nextState === 'BLOCKED') blocked.push(id); else recovered.push(id)
+    }
+    persist()
+    return { recovered, blocked, missing }
+  }
+
+  const recovery = reconcile()
 
   function create({ taskId, baseSha, branchName, refuseDirtyPrimary = true, requireHeadBase = true }) {
     const id = safeTaskId(taskId), branch = safeBranch(branchName || `claude/${id}`)
@@ -76,8 +157,10 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
     if (requireHeadBase && resolvedBase !== primaryHead) throw Object.assign(new Error('explicit base SHA does not represent current primary HEAD'), { code: 'COLLABORATION_UNEXPECTED_BASE' })
     if (refuseDirtyPrimary && git(repository, ['status', '--porcelain', '--untracked-files=all'])) throw Object.assign(new Error('primary checkout is dirty; a reviewed collaboration base is required'), { code: 'COLLABORATION_DIRTY_PRIMARY' })
     git(repository, ['worktree', 'add', '-b', branch, destination, resolvedBase])
-    const record = Object.freeze({ schemaVersion: 1, taskId: id, branch, path: fs.realpathSync(destination), baseSha: resolvedBase, primaryHeadAtCreation: primaryHead, createdAt: Date.now(), active: true })
+    const timestamp = now()
+    const record = Object.freeze({ schemaVersion: 1, taskId: id, branch, path: fs.realpathSync(destination), baseSha: resolvedBase, primaryHeadAtCreation: primaryHead, createdAt: timestamp, updatedAt: timestamp, state: 'ACTIVE', reason: null, active: true, revision: 1 })
     records.set(id, record)
+    persist()
     return { ...record }
   }
 
@@ -113,7 +196,8 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
   function markInactive(taskId) {
     const id = safeTaskId(taskId), record = records.get(id)
     if (!record) throw new Error('worktree is not registered')
-    records.set(id, Object.freeze({ ...record, active: false, endedAt: Date.now() }))
+    records.set(id, Object.freeze({ ...record, active: false, state: 'INACTIVE', reason: null, endedAt: now(), updatedAt: now(), revision: record.revision + 1 }))
+    persist()
     return get(id)
   }
 
@@ -128,11 +212,12 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
     git(repository, ['worktree', 'remove', record.path])
     if (deleteBranch && integrated) git(repository, ['branch', '-d', record.branch])
     else if (deleteBranch && rejected && forceDeleteRejectedBranch) git(repository, ['branch', '-D', record.branch])
-    records.delete(id)
+    records.set(id, Object.freeze({ ...record, active: false, state: integrated ? 'INTEGRATED' : rejected ? 'REJECTED' : 'INACTIVE', reason: null, endedAt: now(), updatedAt: now(), revision: record.revision + 1 }))
+    persist()
     return { taskId: id, removed: true, branchPreserved: !deleteBranch, disposition: integrated ? 'INTEGRATED' : rejected ? 'REJECTED' : 'EMPTY' }
   }
 
-  return { create, get, list, inspect, markInactive, cleanup, repositoryRoot: repository, worktreeRoot: canonicalWorktrees }
+  return { create, get, list, inspect, markInactive, cleanup, recovery, repositoryRoot: repository, worktreeRoot: canonicalWorktrees, leaseFile: leasesPath }
 }
 
 export { git as runGit }

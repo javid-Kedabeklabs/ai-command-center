@@ -2,6 +2,10 @@
 
 ## Current completion checkpoint — 2026-07-14
 
+- Completed durable Fable collaboration leases with atomic persistence, exact Git-identity restart reconciliation, orphan/mismatch blocking, and preservation of unknown or unintegrated work.
+- Added a sanitized `/api/collaboration` control plane and accessible Collaboration Center. Task packets can be validated and stored, but live dispatch and automatic integration remain explicitly disabled until task→lease→owned-process receipts are atomic.
+- The authoritative release verifier now passes 30/30 gates with twelve live browser journeys. Receipt: `15f09de360c101307862219cb388aa108cfd7190969c4dc3993746ed3a1789c6`.
+- Committed the collaboration checkpoint at `70978b8`. Reloaded through host request `host-0198fcfdd084277e`; health returned 200 after two attempts with receipt `6b25a6f47714cf731503e21eb5369d0193b4d165557b72560ea36c941959762a`. System, collaboration status/tasks/leases returned 200 and hostile Host returned 403.
 - Completed the additive Agent Architecture: fourteen primitives, versioned Role Cards, separate instruction profiles and Agent Instances, exact Workflow Assignments, revisioned atomic persistence, nondestructive snapshot-bound preview, explicit ambiguous-role decisions, idempotent migration, durable rollback, and exact-only reactivation.
 - Added live migration/rollback/assignment APIs, preserved unchanged legacy execution fallback, exposed technical identity in Agent configuration and Company World data, and added an accessible browser migration journey.
 - The authoritative release verifier now passes 29/29 gates with eleven live browser journeys. Receipt: `e57c3ee01e4e7c81c2c4c2a319dfa1cf2d78f70ed3e50df10d0b8059f38c8d3d`.

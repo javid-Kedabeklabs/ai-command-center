@@ -62,6 +62,23 @@ test('Agent Architecture migration is explicit, reversible, and preserves ambigu
   expect(blocking, blocking.map(item => `${item.id}: ${item.help}`).join('\n')).toEqual([])
 })
 
+test('AI Collaboration truthfully exposes durable review-gated worker state', async ({ page }) => {
+  await page.goto('/?page=collaboration&onboarding=skip')
+  const center = page.getByTestId('collaboration-center')
+  await expect(center).toBeVisible()
+  await expect(center).toContainText('Codex owns architecture and integration')
+  await expect(center).toContainText('Automatic integration: disabled')
+  await expect(center).toContainText('Live dispatch remains disabled')
+  const response = await page.request.get('/api/collaboration/status')
+  expect(response.ok(), await response.text()).toBeTruthy()
+  const status = await response.json()
+  expect(status.dispatchEnabled).toBe(false)
+  expect(status.policy).toMatchObject({ centralRuntimeWriter: 'codex', modifyingWorker: 'claude-fable', reviewer: 'qwen-read-only', automaticIntegration: false })
+  const report = await new AxeBuilder({ page }).include('[data-testid="collaboration-center"]').analyze()
+  const blocking = report.violations.filter(item => item.impact === 'serious' || item.impact === 'critical')
+  expect(blocking, blocking.map(item => `${item.id}: ${item.help}`).join('\n')).toEqual([])
+})
+
 test('keyboard editing, reduced motion, responsive layout, and canvas visuals remain deterministic', async ({ page }) => {
   const workflowId = 'browser-ux-deterministic'
   const workflow = {

@@ -37,6 +37,7 @@ state/host-operations/
 state/collaboration/task-index.json
 state/collaboration/worker-status.json
 state/collaboration/capacity-status.json
+state/collaboration/worktree-leases.json
 state/.fixture-*
 state/.migration-in-progress
 state/local-factory/**

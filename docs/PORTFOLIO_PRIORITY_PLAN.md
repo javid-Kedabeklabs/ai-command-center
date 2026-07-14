@@ -29,10 +29,10 @@ At most 20% of active delivery time may be spent on factory improvements while a
 
 ## Current authoritative checkpoint
 
-- Local implementation and documentation reconciliation: `d0f7c04`.
+- Local collaboration implementation checkpoint: `70978b8`; durable worktree leases, sanitized task/status APIs, truthful UI, and packaged-install fallback are verified.
 - Sanitized public review snapshot: `377e377f64deaff07b9e8aeafcfab32246ac5d9e` on `review/current-20260713`; it excludes every `data/` path, Gitleaks found zero leaks, and unauthenticated `git ls-remote` confirmed the public branch.
 - Host reload request `host-a573eebef60132e7`, receipt SHA-256 `69b60a38c967acfc7a8d719126b8f70414d09e411593f3131a23bc6e8ae435f6`: health 200 after two attempts; system, Agent Architecture, migration preview, and Company World APIs returned 200; hostile Host returned 403; live architecture remained revision 0 with no automatic migration.
-- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, and enterprise deterministic hardening are verified by the 26-gate release contract.
+- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, Agent Architecture, collaboration persistence/API, and enterprise deterministic hardening are verified by the 30-gate release contract with twelve browser journeys.
 - Only legal open-source designation is blocked: the package remains `UNLICENSED` until the owner selects a license.
 
 The P0–P2 tables below are retained as the dependency rationale that produced the implementation. They are no longer an open-work queue. Current remaining v1 work is the owner’s license choice. P3/P4 remain separately measured or deferred enhancements.
