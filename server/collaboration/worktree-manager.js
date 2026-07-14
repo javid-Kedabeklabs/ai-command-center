@@ -42,6 +42,14 @@ function changedFiles(repository, baseSha, headSha) {
   return output ? output.split('\0').filter(Boolean) : []
 }
 
+function dirtyPrimaryFiles(repository) {
+  return git(repository, ['status', '--porcelain', '--untracked-files=all'], { trim: false }).split(/\r?\n/).filter(Boolean).map(line => {
+    const value = line.slice(3).trim(), file = value.includes(' -> ') ? value.split(' -> ').at(-1) : value
+    if (!file || path.isAbsolute(file) || file.split('/').some(part => part === '..')) throw Object.assign(new Error('primary checkout reported an unsafe dirty path'), { code: 'COLLABORATION_DIRTY_PRIMARY' })
+    return file.replace(/^"|"$/g, '')
+  })
+}
+
 const LEASE_STATES = new Set(['ACTIVE', 'INACTIVE', 'BLOCKED', 'INTEGRATED', 'REJECTED'])
 
 function leaseError(message) {
@@ -147,7 +155,7 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
 
   const recovery = reconcile()
 
-  function create({ taskId, baseSha, branchName, refuseDirtyPrimary = true, requireHeadBase = true }) {
+  function create({ taskId, baseSha, branchName, refuseDirtyPrimary = true, requireHeadBase = true, allowDirtyPrimaryPatterns = [], excludeSensitivePaths = true }) {
     const id = safeTaskId(taskId), branch = safeBranch(branchName || `claude/${id}`)
     if (records.has(id)) throw Object.assign(new Error('task already has a registered worktree'), { code: 'COLLABORATION_WORKTREE_EXISTS' })
     const destination = path.join(canonicalWorktrees, id)
@@ -155,8 +163,11 @@ export function createWorktreeManager({ repositoryRoot, worktreeRoot = path.join
     const resolvedBase = git(repository, ['rev-parse', '--verify', `${baseSha}^{commit}`])
     const primaryHead = git(repository, ['rev-parse', 'HEAD'])
     if (requireHeadBase && resolvedBase !== primaryHead) throw Object.assign(new Error('explicit base SHA does not represent current primary HEAD'), { code: 'COLLABORATION_UNEXPECTED_BASE' })
-    if (refuseDirtyPrimary && git(repository, ['status', '--porcelain', '--untracked-files=all'])) throw Object.assign(new Error('primary checkout is dirty; a reviewed collaboration base is required'), { code: 'COLLABORATION_DIRTY_PRIMARY' })
+    const dirty = dirtyPrimaryFiles(repository)
+    const unexpectedDirty = dirty.filter(file => !allowDirtyPrimaryPatterns.some(pattern => patternsOverlap(file, pattern)))
+    if (refuseDirtyPrimary && unexpectedDirty.length) throw Object.assign(new Error('primary checkout has source changes outside the approved runtime-data boundary'), { code: 'COLLABORATION_DIRTY_PRIMARY', files: unexpectedDirty })
     git(repository, ['worktree', 'add', '-b', branch, destination, resolvedBase])
+    if (excludeSensitivePaths) git(destination, ['sparse-checkout', 'set', '--no-cone', '/*', '!/data/', '!/logs/', '!/state/'])
     const timestamp = now()
     const record = Object.freeze({ schemaVersion: 1, taskId: id, branch, path: fs.realpathSync(destination), baseSha: resolvedBase, primaryHeadAtCreation: primaryHead, createdAt: timestamp, updatedAt: timestamp, state: 'ACTIVE', reason: null, active: true, revision: 1 })
     records.set(id, record)

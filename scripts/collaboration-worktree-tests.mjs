@@ -65,6 +65,18 @@ await test('rejects dirty primary state and an unexpected explicit base', () => 
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+await test('permits only explicitly bounded runtime-data dirt and excludes sensitive trees from the worker checkout', () => {
+  const { root, baseSha } = repository(), manager = createWorktreeManager({ repositoryRoot: root })
+  write(root, 'data/runtime.json', '{"user":true}\n')
+  const allowed = manager.create({ taskId: 'runtime-dirty', baseSha, allowDirtyPrimaryPatterns: ['data/**'] })
+  assert.equal(fs.existsSync(path.join(allowed.path, 'data')), false)
+  assert.equal(git(allowed.path, ['status', '--porcelain', '--untracked-files=all']), '')
+  manager.markInactive('runtime-dirty'); manager.cleanup('runtime-dirty')
+  write(root, 'src/allowed.txt', 'dirty source\n')
+  assert.throws(() => manager.create({ taskId: 'source-dirty', baseSha, allowDirtyPrimaryPatterns: ['data/**'] }), error => error.code === 'COLLABORATION_DIRTY_PRIMARY' && error.files.includes('src/allowed.txt'))
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 await test('verifies one clean commit and rejects missing, dirty, and out-of-scope work', () => {
   const { root, baseSha } = repository(), manager = createWorktreeManager({ repositoryRoot: root })
   const missing = manager.create({ taskId: 'missing-commit', baseSha })

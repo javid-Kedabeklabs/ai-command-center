@@ -59,7 +59,7 @@ export function createClaudeRunner({ repositoryRoot, claudePath, processManager,
   validateClaudeCapabilityProfile(capabilityProfile)
   const outputLimit = Math.max(4_096, Math.min(4 * 1024 * 1024, Number(maxOutputBytes) || 256 * 1024))
 
-  async function run(taskPacket, { worktree = null } = {}) {
+  async function run(taskPacket, { worktree = null, onStarted = null } = {}) {
     const task = validateTaskPacket(taskPacket), readOnly = isReadOnlyTaskType(task.taskType)
     const cwd = readOnly ? fs.realpathSync(path.resolve(repositoryRoot)) : verifiedImplementationWorktree(repositoryRoot, task, worktree)
     const args = buildClaudeArgv({ taskPacket: task, capabilityProfile, resultSchema, readOnly })
@@ -79,6 +79,12 @@ export function createClaudeRunner({ repositoryRoot, claudePath, processManager,
     }
     child.stdout?.on('data', chunk => capture('stdout', chunk))
     child.stderr?.on('data', chunk => capture('stderr', chunk))
+    try { await onStarted?.(record) }
+    catch (error) {
+      try { processManager.cancelOwned(task.taskId, { pid: record.pid, signal: 'SIGTERM' }) } catch {}
+      await new Promise(resolve => child.once('close', resolve))
+      throw Object.assign(new Error(`worker start receipt failed safely: ${error.message}`), { code: 'COLLABORATION_START_RECEIPT_FAILED', cause: error, process: processManager.get(task.taskId) })
+    }
     child.stdin.end(composePrompt(workerContract, task))
     const timer = setTimer(() => {
       timedOut = true

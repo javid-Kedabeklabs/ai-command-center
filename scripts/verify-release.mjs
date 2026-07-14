@@ -30,6 +30,7 @@ const gates = [
   ['durable agent architecture store', process.execPath, ['scripts/agent-architecture-store-tests.mjs']],
   ['live agent migration and rollback', process.execPath, ['scripts/agent-architecture-live-tests.mjs']],
   ['collaboration persistence and API', process.execPath, ['scripts/collaboration-api-tests.mjs']],
+  ['collaboration dispatch receipts', process.execPath, ['scripts/collaboration-dispatcher-tests.mjs']],
   ['TypeScript', 'npx', ['tsc', '--noEmit']],
   ['production build', 'npm', ['run', 'build']],
   ['browser contract', 'npm', ['run', 'test:browser']],

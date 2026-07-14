@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { redactSensitive } from './result-parser.js'
 import { TASK_STATUSES, validateTaskPacket } from './task-schema.js'
+import { assertOwnershipAvailable } from './conflict-detector.js'
 
 export const COLLABORATION_TASK_STORE_VERSION = 1
 
@@ -267,6 +268,11 @@ export function createCollaborationTaskStore({ repositoryRoot, storeRoot = path.
       if (!current) throw new Error('collaboration task not found')
       if (current.status === 'RUNNING') return { task: structuredClone(current), duplicate: true }
       if (current.status !== 'QUEUED') throw Object.assign(new Error(`task cannot be dispatched from ${current.status}`), { code: 'COLLABORATION_DUPLICATE_DISPATCH' })
+      const activeReservations = Object.values(index.tasks).filter(item => item.status === 'RUNNING' && item.taskId !== current.taskId).map(item => {
+        const active = readTaskRecord(item.taskId).task
+        return { taskId: active.taskId, patterns: active.filesAllowed, readOnly: active.permissionProfile === 'READ_ONLY_ADVISOR' }
+      })
+      if (current.task.permissionProfile !== 'READ_ONLY_ADVISOR') assertOwnershipAvailable({ taskId: current.taskId, patterns: current.task.filesAllowed, readOnly: false }, activeReservations)
       const id = safeId(dispatchId, 'dispatchId')
       const timestamp = now()
       const dispatch = { dispatchId: id, workerId: workerId ? boundedText(workerId, 100) : null, pid: Number.isInteger(pid) && pid > 0 ? pid : null, processGroup: Number.isInteger(processGroup) && processGroup > 0 ? processGroup : null, startedAt: timestamp }
@@ -282,8 +288,24 @@ export function createCollaborationTaskStore({ repositoryRoot, storeRoot = path.
     })
   }
 
+  async function updateDispatch(taskId, dispatchId, processEvidence) {
+    return mutate(() => {
+      const current = readTaskRecord(taskId)
+      if (!current || current.status !== 'RUNNING' || current.dispatch?.dispatchId !== safeId(dispatchId, 'dispatchId')) throw Object.assign(new Error('dispatch receipt does not match the active task'), { code: 'COLLABORATION_DISPATCH_MISMATCH' })
+      const process = sanitizedEvidence(processEvidence)
+      if (!Number.isInteger(process?.pid) || process.pid <= 0 || process.taskId !== current.taskId || process.state !== 'RUNNING') throw Object.assign(new Error('owned process evidence is invalid'), { code: 'COLLABORATION_PROCESS_RECEIPT_INVALID' })
+      const timestamp = now()
+      const dispatch = { ...current.dispatch, pid: process.pid, processGroup: Number.isInteger(process.processGroup) && process.processGroup > 0 ? process.processGroup : null, executable: boundedText(process.executable, 120), processStartedAt: process.startedAt, receiptRecordedAt: timestamp }
+      const next = { ...current, dispatch, updatedAt: timestamp }
+      atomicWrite(recordPath('RUNNING', current.taskId), next)
+      index.tasks[current.taskId] = { ...index.tasks[current.taskId], updatedAt: timestamp, dispatchId: dispatch.dispatchId }
+      index.updatedAt = timestamp; atomicWrite(indexFile, index)
+      return structuredClone(next)
+    })
+  }
+
   const status = () => ({ enabled: !disabledError, error: disabledError ? { code: disabledError.code, message: boundedText(disabledError.message) } : null })
-  return { initialize, createTask, getTask, listTasks, transitionTask, claimTask, status, files: { root: constrained.target, index: indexFile } }
+  return { initialize, createTask, getTask, listTasks, transitionTask, claimTask, updateDispatch, status, files: { root: constrained.target, index: indexFile } }
 }
 
 export { atomicWrite, assertConstrainedStoreRoot, sanitizedEvidence }

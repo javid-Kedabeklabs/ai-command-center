@@ -1,6 +1,6 @@
 # Codex–Claude collaboration scripts
 
-These scripts provide read-only diagnostics, redacted status, bounded stop requests, and conservative worktree cleanup for the collaboration amendment. Live task dispatch and worker launch are **not implemented or supported yet**. No script in this directory currently authorizes a live Claude model call.
+These scripts provide read-only diagnostics, redacted status, bounded stop requests, and conservative worktree cleanup. The fixture-verified dispatcher now binds a validated task, sparse sensitive-data-free worktree, owned process, actual model provenance, inspected commit, and terminal receipt. Product dispatch remains off by default and requires host-owner `ACC_ENABLE_FABLE_DISPATCH=1`, explicit mutation intent, exact confirmation, an exact reviewed base SHA, and a queued packet. Integration is never automatic.
 
 ## Current CLI facts
 
@@ -15,7 +15,7 @@ The audited installation is Claude Code 2.1.207. Its strongest supported effort 
 
 ## Live opt-in and safe base gate
 
-When a dispatcher is implemented, live execution must remain separately and explicitly opted in; fixture tests and ordinary application startup must never consume Claude or Codex usage. Before any live task, Codex must approve a persisted bounded task packet, confirm authentication and model availability, verify a clean and expected base commit, reserve non-overlapping file ownership, create and register a unique repository-scoped worktree and branch, and configure test, permission, timeout, capacity, and integration gates.
+Live execution remains separately and explicitly opted in; fixture tests and ordinary application startup never consume Claude or Codex usage. Before any live task, Codex approves a persisted bounded task packet, confirms authentication and model availability, supplies the exact current reviewed base commit, reserves non-overlapping file ownership, and retains the integration gate. Dirty source files are refused; explicitly bounded `data/**` runtime changes may coexist because the sparse worker checkout excludes `data/`, `logs/`, and `state/` entirely.
 
 The first live pilot must remain low risk and require one isolated commit. No live worker may edit the primary checkout, use bypass permissions, access secrets or production data, start with unresolved shared-file ownership, or integrate without Codex diff review and deterministic tests.
 

@@ -29,10 +29,10 @@ At most 20% of active delivery time may be spent on factory improvements while a
 
 ## Current authoritative checkpoint
 
-- Local collaboration implementation checkpoint: `70978b8`; durable worktree leases, sanitized task/status APIs, truthful UI, and packaged-install fallback are verified.
-- Sanitized public review snapshot: `377e377f64deaff07b9e8aeafcfab32246ac5d9e` on `review/current-20260713`; it excludes every `data/` path, Gitleaks found zero leaks, and unauthenticated `git ls-remote` confirmed the public branch.
-- Host reload request `host-a573eebef60132e7`, receipt SHA-256 `69b60a38c967acfc7a8d719126b8f70414d09e411593f3131a23bc6e8ae435f6`: health 200 after two attempts; system, Agent Architecture, migration preview, and Company World APIs returned 200; hostile Host returned 403; live architecture remained revision 0 with no automatic migration.
-- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, Agent Architecture, collaboration persistence/API, and enterprise deterministic hardening are verified by the 30-gate release contract with twelve browser journeys.
+- Local collaboration implementation checkpoint: `c71819825644745d2142e3cfba625d6dd3808fa0`; durable leases, sanitized control-plane APIs, atomic ownership, sparse sensitive-tree exclusion, owned-process/model/commit provenance, fail-closed compensation, and terminal receipts are committed without automatic integration.
+- Sanitized public review snapshot before the pending dispatch slice: `3b81819bff0637899cce896731d650cb57047940` on `review/current-20260713`; it excludes every `data/` path, Gitleaks found zero leaks, and unauthenticated `git ls-remote` confirmed the public branch.
+- Host reload request `host-c3e0040a122fdff9`, receipt SHA-256 `9eda563b6a20f380ff0df45880b7fec8f5ffd1fd8b06b0a9e4cf3d46452c2524`: health returned 200 after two attempts; live collaboration status exposes the verified dispatch contract while dispatch remains owner-disabled and integration remains false; tasks and leases returned 200; hostile Host returned 403.
+- Runtime, governance, plugins, evaluations/learning, current-scope UX, Company World, package lifecycle, Agent Architecture, collaboration persistence/API, fixture-proven dispatch, and enterprise deterministic hardening are verified by the 31-gate release contract with twelve browser journeys. Receipt: `0918dac2aca2f341475ee35acfb16bfdd7b6b8f5830de8705e644d3e3bd860b4`.
 - Only legal open-source designation is blocked: the package remains `UNLICENSED` until the owner selects a license.
 
 The P0–P2 tables below are retained as the dependency rationale that produced the implementation. They are no longer an open-work queue. Current remaining v1 work is the owner’s license choice. P3/P4 remain separately measured or deferred enhancements.

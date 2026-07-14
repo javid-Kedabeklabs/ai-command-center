@@ -90,6 +90,18 @@ await test('prevents duplicate creation and duplicate dispatch atomically', asyn
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+await test('reserves modifying file ownership atomically and permits independent scopes', async () => {
+  const root = tempRepository(), store = createCollaborationTaskStore({ repositoryRoot: root })
+  await store.createTask(packet('ownership-one', { filesAllowed: ['server/collaboration/**'] }))
+  await store.createTask(packet('ownership-conflict', { filesAllowed: ['server/collaboration/router.js'] }))
+  await store.createTask(packet('ownership-independent', { filesAllowed: ['web/src/components/**'] }))
+  await store.claimTask('ownership-one', { dispatchId: 'dispatch-one' })
+  await assert.rejects(() => store.claimTask('ownership-conflict', { dispatchId: 'dispatch-conflict' }), error => error.code === 'FILE_OWNERSHIP_CONFLICT')
+  const independent = await store.claimTask('ownership-independent', { dispatchId: 'dispatch-independent' })
+  assert.equal(independent.task.status, 'RUNNING')
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 await test('rejects invalid terminal transitions', async () => {
   const root = tempRepository(), store = createCollaborationTaskStore({ repositoryRoot: root })
   await store.createTask(packet())

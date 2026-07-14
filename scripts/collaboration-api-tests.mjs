@@ -39,7 +39,7 @@ console.log('== collaboration control-plane API ==')
 try {
   await test('reports a sanitized non-dispatching control plane', async () => {
     const { response, body } = await request('/status')
-    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.policy.centralRuntimeWriter, 'codex')
+    assert.equal(response.status, 200); assert.equal(body.dispatchEnabled, false); assert.equal(body.worktreeEnabled, true); assert.equal(body.dispatchContract.verified, true); assert.equal(body.policy.centralRuntimeWriter, 'codex')
     assert.equal(JSON.stringify(body).includes(root), false)
   })
   await test('requires explicit mutation intent and validates task packets', async () => {
@@ -60,6 +60,10 @@ try {
     worktreeManager.create({ taskId: 'lease-api-task', baseSha: git(root, ['rev-parse', 'HEAD']) })
     const leases = await request('/leases')
     assert.equal(leases.response.status, 200); assert.equal(leases.body.length, 1); assert.equal(Object.hasOwn(leases.body[0], 'path'), false)
+  })
+  await test('keeps live dispatch disabled even with explicit mutation intent', async () => {
+    const result = await request(`/tasks/${packet.taskId}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-command-center-intent': 'collaboration-dispatch' }, body: '{}' })
+    assert.equal(result.response.status, 409); assert.equal(result.body.code, 'COLLABORATION_DISPATCH_DISABLED'); assert.equal(result.body.dispatchEnabled, false)
   })
 } finally {
   server.close(); await new Promise(resolve => server.once('close', resolve)); fs.rmSync(root, { recursive: true, force: true })

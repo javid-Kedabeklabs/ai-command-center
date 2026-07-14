@@ -51,6 +51,7 @@ import { DEFAULT_AGENT_PRIMITIVES } from './agents/primitive-schema.js'
 import { createCollaborationTaskStore } from './collaboration/task-store.js'
 import { createWorktreeManager } from './collaboration/worktree-manager.js'
 import { createCollaborationRouter } from './collaboration/router.js'
+import { createLiveCollaborationDispatch } from './collaboration/live-dispatch.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -86,6 +87,7 @@ catch (error) {
     list: () => [],
   }
 }
+const liveCollaborationDispatch = createLiveCollaborationDispatch({ repositoryRoot: ROOT, taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, enabled: process.env.ACC_ENABLE_FABLE_DISPATCH === '1' })
 
 const HOME = os.homedir()
 const requestedBrain = process.env.ACC_BRAIN_DIR ? path.resolve(ROOT, process.env.ACC_BRAIN_DIR) : path.join(HOME, 'AgentBrain')
@@ -3243,7 +3245,7 @@ const triggerService = createTriggerService({
 
 const localModelFactory = createLocalModelFactory({ repositoryRoot: ROOT, endpoint: LMSTUDIO, concurrency: 4, maxQueue: 100 })
 app.use('/api/local-factory', createLocalFactoryRouter({ factory: localModelFactory, appendAudit }))
-app.use('/api/collaboration', createCollaborationRouter({ taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, appendAudit }))
+app.use('/api/collaboration', createCollaborationRouter({ taskStore: collaborationTaskStore, worktreeManager: collaborationWorktrees, liveDispatch: liveCollaborationDispatch, appendAudit }))
 
 // ---------- static UI ----------
 const DIST = path.join(ROOT, 'dist')

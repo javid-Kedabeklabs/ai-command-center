@@ -67,7 +67,8 @@ export type ProfilesResp = { profiles: Profile[]; roles: string[] }
 export type LocalFactoryStatus = { enabled: boolean; model: string; endpoint: string; concurrency: number; maxQueue: number; queued: number; active: number; completed: number; closed: boolean }
 export type LocalFactoryTaskSummary = { taskId: string; status: string; relativePath: string; createdAt: number; updatedAt: number }
 export type CollaborationStatus = {
-  enabled: boolean; worktreeEnabled: boolean; worktreeUnavailableReason: string | null; dispatchEnabled: boolean
+  enabled: boolean; worktreeEnabled: boolean; worktreeUnavailableReason: string | null; dispatchEnabled: boolean; dispatchUnavailableReason: string | null
+  dispatchContract: { schemaVersion: number; verified: boolean; prerequisites: string[] }
   policy: { centralRuntimeWriter: string; modifyingWorker: string; reviewer: string; automaticIntegration: boolean }
   counts: Record<string, number>; activeLeases: number; blockedLeases: number
   leaseRecovery: { recovered: string[]; blocked: string[]; missing: string[] }

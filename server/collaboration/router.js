@@ -8,7 +8,7 @@ const publicLease = lease => ({
   updatedAt: lease.updatedAt, endedAt: lease.endedAt || null,
 })
 
-export function createCollaborationRouter({ taskStore, worktreeManager, appendAudit = () => {} } = {}) {
+export function createCollaborationRouter({ taskStore, worktreeManager, liveDispatch = { enabled: false, reason: 'OWNER_OPT_IN_REQUIRED', dispatcher: null }, appendAudit = () => {} } = {}) {
   if (!taskStore || !worktreeManager) throw new Error('collaboration task store and worktree manager are required')
   const router = express.Router()
 
@@ -22,7 +22,9 @@ export function createCollaborationRouter({ taskStore, worktreeManager, appendAu
         enabled: taskStore.status().enabled,
         worktreeEnabled: worktreeManager.available !== false,
         worktreeUnavailableReason: worktreeManager.available === false ? worktreeManager.unavailableReason : null,
-        dispatchEnabled: false,
+        dispatchEnabled: liveDispatch.enabled === true,
+        dispatchUnavailableReason: liveDispatch.enabled ? null : liveDispatch.reason,
+        dispatchContract: { schemaVersion: 1, verified: true, prerequisites: ['explicit-owner-command', 'reviewed-clean-base', 'available-fable-capacity', 'verified-worktree-lease', 'owned-process-receipt', 'codex-integration-review'] },
         policy: { centralRuntimeWriter: 'codex', modifyingWorker: 'claude-fable', reviewer: 'qwen-read-only', automaticIntegration: false },
         counts, activeLeases: leases.filter(item => item.state === 'ACTIVE').length,
         blockedLeases: leases.filter(item => item.state === 'BLOCKED').length,
@@ -54,6 +56,20 @@ export function createCollaborationRouter({ taskStore, worktreeManager, appendAu
       appendAudit('collaboration_task_packet_saved', { taskId: result.task.taskId, assignedWorker: result.task.task.assignedWorker, taskType: result.task.task.taskType, duplicate: result.duplicate })
       res.status(result.duplicate ? 200 : 201).set('Cache-Control', 'no-store').json({ ...result, dispatchEnabled: false })
     } catch (error) { res.status(400).json(publicError(error)) }
+  })
+
+  router.post('/tasks/:taskId/dispatch', requireMutationIntent('collaboration-dispatch'), (req, res) => {
+    if (!liveDispatch.enabled || !liveDispatch.dispatcher) return res.status(409).set('Cache-Control', 'no-store').json({ error: 'live collaboration dispatch requires explicit host-owner opt-in', code: 'COLLABORATION_DISPATCH_DISABLED', dispatchEnabled: false, unavailableReason: liveDispatch.reason })
+    if (req.get('x-command-center-confirm') !== 'dispatch-fable') return res.status(428).json({ error: 'exact Fable dispatch confirmation is required', code: 'COLLABORATION_DISPATCH_CONFIRMATION_REQUIRED' })
+    const baseSha = String(req.body?.baseSha || '')
+    if (!/^[a-f0-9]{40,64}$/.test(baseSha)) return res.status(400).json({ error: 'an exact reviewed base SHA is required', code: 'COLLABORATION_BASE_REQUIRED' })
+    void liveDispatch.dispatcher.dispatch(req.params.taskId, { baseSha, allowDirtyPrimaryPatterns: ['data/**'] }).then(receipt => {
+      appendAudit('collaboration_dispatch_completed', { taskId: req.params.taskId, dispatchId: receipt.dispatchId, actualModel: receipt.actualModel, receiptSha256: receipt.receiptSha256 })
+    }).catch(error => {
+      appendAudit('collaboration_dispatch_stopped', { taskId: req.params.taskId, code: error.code || 'COLLABORATION_DISPATCH_FAILED', receiptSha256: error.dispatchReceipt?.receiptSha256 || null })
+    })
+    appendAudit('collaboration_dispatch_requested', { taskId: req.params.taskId, baseSha })
+    res.status(202).set('Cache-Control', 'no-store').json({ accepted: true, taskId: req.params.taskId, dispatchEnabled: true })
   })
 
   return router
